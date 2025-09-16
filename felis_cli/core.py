@@ -214,7 +214,7 @@ def _draw_annotation(image, labels_path: Path, label_file: str, txs: float = 5.0
     return image
 
 
-def validate(cfg: Config, show: bool = True) -> None:
+def validate(cfg: Config, show: bool = True, save_annotated: bool = False) -> None:
     p = resolve_paths(cfg)
     base_dir = p.per_file_root
 
@@ -222,8 +222,8 @@ def validate(cfg: Config, show: bool = True) -> None:
     for idx, file in enumerate(sorted(os.listdir(p.input_dir))):
         stem = file.rsplit(".", 1)[0]
         labels = base_dir / stem / "labels"
-        if not labels.exists():
-            # No predictions saved for this file
+        # Skip when there are no label files (dir may exist but be empty)
+        if not labels.exists() or not any(labels.glob("*.txt")):
             continue
 
         # If video frames were saved, use them; else handle still images
@@ -234,7 +234,14 @@ def validate(cfg: Config, show: bool = True) -> None:
                 frame = cv2.imread(str(frames_dir / frame_name))
                 if frame is None:
                     continue
+                # If no annotation exists for this frame, skip gracefully
+                if not (labels / ann_name).exists():
+                    continue
                 vis = _draw_annotation(frame, labels, ann_name)
+                if save_annotated:
+                    out_dir = base_dir / stem / "annotated"
+                    out_dir.mkdir(parents=True, exist_ok=True)
+                    cv2.imwrite(str(out_dir / frame_name), vis)
                 if show:
                     cv2.imshow(f"{idx}_{frame_name}", vis)
                     cv2.waitKey(0)
@@ -247,7 +254,13 @@ def validate(cfg: Config, show: bool = True) -> None:
                 img = cv2.imread(str(img_path))
                 if img is None:
                     continue
+                if not (labels / ann_name).exists():
+                    continue
                 vis = _draw_annotation(img, labels, ann_name)
+                if save_annotated:
+                    out_dir = base_dir / stem / "annotated"
+                    out_dir.mkdir(parents=True, exist_ok=True)
+                    cv2.imwrite(str(out_dir / file), vis)
                 if show:
                     cv2.imshow(f"{idx}_{img_path.name}", vis)
                     cv2.waitKey(0)

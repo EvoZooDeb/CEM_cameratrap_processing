@@ -25,6 +25,11 @@ class RunPipeline(Command):
         parser.add_argument("--save-frames", action="store_true")
         parser.add_argument("--validate", action="store_true", help="Run visual validation at the end")
         parser.add_argument("--no-show", action="store_true", help="Do not show windows during validate")
+        parser.add_argument(
+            "--save-annotated",
+            action="store_true",
+            help="Save annotated images during validate",
+        )
         return parser
 
     def take_action(self, parsed_args):
@@ -54,5 +59,4 @@ class RunPipeline(Command):
 
         if parsed_args.validate:
             self.app.stdout.write("[+] Validating (visual) ...\n")
-            validate(cfg, show=not parsed_args.no_show)
-
+            validate(cfg, show=not parsed_args.no_show, save_annotated=parsed_args.save_annotated)

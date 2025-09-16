@@ -18,6 +18,8 @@ This installs the console command `felis`.
 ```
 # Use a config file in the repo root
 felis run --config .felis.yml --validate --no-show
+# Validate and save annotated outputs
+felis run --config .felis.yml --validate --save-annotated --no-show
 
 # Or override via CLI flags (no config file needed)
 felis predict \
@@ -41,7 +43,9 @@ felis validate --config .felis.yml --no-show
 - `felis exif`: Extract capture timestamps/durations to CSV.
 - `felis aggregate`: Merge labels + EXIF, group image bursts into sequences, export CSV.
 - `felis validate`: Visualize annotations with OpenCV windows (for QC).
+- `felis validate --save-annotated`: Save overlays to per-file `annotated/` folders under results (works with or without `--no-show`).
 - `felis run`: Chain predict → exif → aggregate; optional `--validate`.
+  - Options: `--no-show` to suppress windows, `--save-annotated` to write overlays.
 
 Common options (apply to most commands):
 - `--input-root`: Base raw data root.

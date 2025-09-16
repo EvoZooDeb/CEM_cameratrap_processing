@@ -19,6 +19,11 @@ class Validate(Command):
         parser.add_argument("--footage-date")
         parser.add_argument("--model-path")  # required by config, but unused here
         parser.add_argument("--no-show", action="store_true", help="Do not open windows (dry run)")
+        parser.add_argument(
+            "--save-annotated",
+            action="store_true",
+            help="Save annotated images into results/<camera>/<date>/<file>/annotated",
+        )
         return parser
 
     def take_action(self, parsed_args):
@@ -31,5 +36,4 @@ class Validate(Command):
             "model_path": parsed_args.model_path,
         }
         cfg = load_config(parsed_args.config, overrides)
-        validate(cfg, show=not parsed_args.no_show)
-
+        validate(cfg, show=not parsed_args.no_show, save_annotated=parsed_args.save_annotated)
