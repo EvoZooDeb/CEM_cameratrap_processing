@@ -1,0 +1,35 @@
+from argparse import ArgumentParser
+
+from cliff.command import Command
+
+from ..config import load_config
+from ..core import validate
+
+
+class Validate(Command):
+    """Visualize annotations on images/frames (OpenCV windows)."""
+
+    def get_parser(self, prog_name):
+        parser = ArgumentParser(prog=prog_name)
+        parser.add_argument("--config", help="Path to YAML config file")
+        parser.add_argument("--input-root")
+        parser.add_argument("--output-root")
+        parser.add_argument("--username")
+        parser.add_argument("--camera-id")
+        parser.add_argument("--footage-date")
+        parser.add_argument("--model-path")  # required by config, but unused here
+        parser.add_argument("--no-show", action="store_true", help="Do not open windows (dry run)")
+        return parser
+
+    def take_action(self, parsed_args):
+        overrides = {
+            "input_root": parsed_args.input_root,
+            "output_root": parsed_args.output_root,
+            "username": parsed_args.username,
+            "camera_id": parsed_args.camera_id,
+            "footage_date": parsed_args.footage_date,
+            "model_path": parsed_args.model_path,
+        }
+        cfg = load_config(parsed_args.config, overrides)
+        validate(cfg, show=not parsed_args.no_show)
+

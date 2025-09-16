@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "felis"
+version = "0.1.0"
+description = "FELIS camera trap pipeline CLI (YOLO predict, EXIF, validate, aggregate)"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+  { name = "Gergő Oláh", email = "gerih98@gmail.com" },
+  { name = "Miklós Bán", email = "banm@vocs.unideb.hu" },
+  { name = "Gábor Bóné", email = "bone_gabor@yahoo.com" },
+]
+dependencies = [
+  "exifread",
+  "ffmpeg-python",
+  "numpy",
+  "opencv-python",
+  "pandas",
+  "pillow",
+  "python-dateutil",
+  "ultralytics",
+  "cliff",
+  "pyyaml",
+]
+
+[project.scripts]
+felis = "felis:main"
+
+[tool.setuptools]
+py-modules = ["felis"]
+
+[tool.setuptools.packages.find]
+include = ["felis_cli*"]
+

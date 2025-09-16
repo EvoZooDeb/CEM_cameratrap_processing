@@ -1,0 +1,10 @@
+exifread
+ffmpeg-python
+numpy
+opencv-python
+pandas
+pillow
+python-dateutil
+ultralytics
+cliff
+pyyaml

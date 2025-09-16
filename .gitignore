@@ -1,0 +1,7 @@
+.venv
+raw
+results
+models
+felis.egg-info
+*.csv
+.felis.yml
