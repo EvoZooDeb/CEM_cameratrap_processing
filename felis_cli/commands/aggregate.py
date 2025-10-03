@@ -18,6 +18,11 @@ class Aggregate(Command):
         parser.add_argument("--camera-id")
         parser.add_argument("--footage-date")
         parser.add_argument("--model-path")  # required by config schema
+        parser.add_argument(
+            "--save-per-image",
+            action="store_true",
+            help="Also write per-image summary CSV",
+        )
         return parser
 
     def take_action(self, parsed_args):
@@ -30,6 +35,11 @@ class Aggregate(Command):
             "model_path": parsed_args.model_path,
         }
         cfg = load_config(parsed_args.config, overrides)
-        df = aggregate(cfg)
-        self.app.stdout.write(f"Wrote {len(df)} sequence rows to CSV.\n")
-
+        result = aggregate(cfg, save_per_image=parsed_args.save_per_image)
+        self.app.stdout.write(
+            f"Wrote {len(result.sequences)} sequence rows to {result.sequence_csv}.\n"
+        )
+        if parsed_args.save_per_image:
+            self.app.stdout.write(
+                f"Wrote {len(result.per_image)} per-image rows to {result.per_image_csv}.\n"
+            )

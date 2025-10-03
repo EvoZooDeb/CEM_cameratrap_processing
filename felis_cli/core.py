@@ -24,6 +24,16 @@ class PathsResolved:
     per_camera_results_dir: Path
     exif_csv: Path
     final_csv: Path
+    per_image_csv: Path
+
+
+@dataclass
+class AggregateResult:
+    sequences: pd.DataFrame
+    per_image: pd.DataFrame
+    sequence_csv: Path
+    per_image_csv: Path
+    per_image_written: bool
 
 
 def resolve_paths(cfg: Config) -> PathsResolved:
@@ -46,6 +56,10 @@ def resolve_paths(cfg: Config) -> PathsResolved:
         per_camera_results_dir
         / f"{cfg.paths.username}_{cfg.paths.camera_id}_{cfg.paths.footage_date}_results.csv"
     )
+    per_image_csv = (
+        per_camera_results_dir
+        / f"{cfg.paths.username}_{cfg.paths.camera_id}_{cfg.paths.footage_date}_per_image.csv"
+    )
     return PathsResolved(
         input_dir=input_dir,
         results_root=results_root,
@@ -53,6 +67,7 @@ def resolve_paths(cfg: Config) -> PathsResolved:
         per_camera_results_dir=per_camera_results_dir,
         exif_csv=exif_csv,
         final_csv=final_csv,
+        per_image_csv=per_image_csv,
     )
 
 
@@ -334,11 +349,14 @@ def _collect_file_summary(per_file_dir: Path) -> pd.DataFrame:
     return df
 
 
-def aggregate(cfg: Config) -> pd.DataFrame:
+def aggregate(cfg: Config, save_per_image: bool = False) -> AggregateResult:
     p = resolve_paths(cfg)
     p.per_camera_results_dir.mkdir(parents=True, exist_ok=True)
 
     file_df = _collect_file_summary(p.per_file_root)
+    if save_per_image:
+        file_df = file_df.sort_values("file_name")
+        file_df.to_csv(p.per_image_csv, index=False)
 
     # EXIF CSV must exist
     if not p.exif_csv.exists():
@@ -435,4 +453,10 @@ def aggregate(cfg: Config) -> pd.DataFrame:
         ],
     )
     seq_df.to_csv(p.final_csv, index=False)
-    return seq_df
+    return AggregateResult(
+        sequences=seq_df,
+        per_image=file_df,
+        sequence_csv=p.final_csv,
+        per_image_csv=p.per_image_csv,
+        per_image_written=save_per_image,
+    )

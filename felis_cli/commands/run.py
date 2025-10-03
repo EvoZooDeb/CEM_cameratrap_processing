@@ -23,6 +23,11 @@ class RunPipeline(Command):
         parser.add_argument("--conf", type=float, default=None)
         parser.add_argument("--iou", type=float, default=None)
         parser.add_argument("--save-frames", action="store_true")
+        parser.add_argument(
+            "--save-per-image",
+            action="store_true",
+            help="Also write per-image summary CSV during aggregate",
+        )
         parser.add_argument("--validate", action="store_true", help="Run visual validation at the end")
         parser.add_argument("--no-show", action="store_true", help="Do not show windows during validate")
         parser.add_argument(
@@ -55,7 +60,7 @@ class RunPipeline(Command):
         get_exif(cfg)
 
         self.app.stdout.write("[3/3] Aggregating...\n")
-        aggregate(cfg)
+        aggregate(cfg, save_per_image=parsed_args.save_per_image)
 
         if parsed_args.validate:
             self.app.stdout.write("[+] Validating (visual) ...\n")
