@@ -14,9 +14,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # System dependencies for OpenCV, ffmpeg, and scientific stack
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ffmpeg \
+      gosu \
       libgl1 \
       libglib2.0-0 \
-    && rm -rf /var/lib/apt/lists/*
+      && rm -rf /var/lib/apt/lists/*
 
 # Create virtual environment
 RUN python -m venv "$VENV_PATH" && \
@@ -36,9 +37,12 @@ RUN pip install .
 
 # Non-root user for runtime
 RUN useradd -m appuser && chown -R appuser:appuser /app
-USER appuser
+
+COPY docker/entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+USER root
 
 # Default command shows CLI help; override with args in `docker run`
-ENTRYPOINT ["felis"]
-CMD ["--help"]
-
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+CMD ["felis", "--help"]

@@ -117,7 +117,26 @@ export FELIS_SAVE_FRAMES=false
 
 
 ```
-docker run --rm -u 0 -v ./.felis.yml:/etc/felis/config.yml:ro -v nc_data:/work/raw:ro -v ./results:/work/results -v ./models/best_26.pt:/work/best_26.pt felis:local exif --config /etc/felis/config.yml --username bela --camera-id Q1 --footage-date 16 
-docker run --rm -u 0 -v ./.felis.yml:/etc/felis/config.yml:ro -v nc_data:/work/raw:ro -v ./results:/work/results -v ./models/best_26.pt:/work/best_26.pt felis:local predict --config /etc/felis/config.yml --username bela --camera-id Q1 --footage-date 16 
-docker run --rm -u 0 -v ./.felis.yml:/etc/felis/config.yml:ro -v nc_data:/work/raw:ro -v ./results:/work/results -v ./models/best_26.pt:/work/best_26.pt felis:local aggregate --config /etc/felis/config.yml --username bela --camera-id Q1 --footage-date 16
+docker run --rm \
+  -v ./.felis.yml:/etc/felis/config.yml:ro \
+  -v nc_data:/work/raw:ro \
+  -v ./results:/work/results \
+  -v ./models/best_26.pt:/work/best_26.pt \
+  felis:local exif --config /etc/felis/config.yml --username bela --camera-id Q1 --footage-date 16
+docker run --rm \
+  -v ./.felis.yml:/etc/felis/config.yml:ro \
+  -v nc_data:/work/raw:ro \
+  -v ./results:/work/results \
+  -v ./models/best_26.pt:/work/best_26.pt \
+  felis:local predict --config /etc/felis/config.yml --username bela --camera-id Q1 --footage-date 16
+docker run --rm \
+  -v ./.felis.yml:/etc/felis/config.yml:ro \
+  -v nc_data:/work/raw:ro \
+  -v ./results:/work/results \
+  -v ./models/best_26.pt:/work/best_26.pt \
+  felis:local aggregate --config /etc/felis/config.yml --username bela --camera-id Q1 --footage-date 16
 ```
+
+The container remaps its internal `appuser` to match the owner of `/work` mounts, so generated files stay owned by the host user. Override with `-e FELIS_UID=<uid> -e FELIS_GID=<gid>` when you need a specific identity.
+
+If your `raw` volume uses restrictive permissions (e.g. network shares that only root can read), either add execute access on the host or fall back to root inside the container with `-e FELIS_FORCE_ROOT=1`. The entrypoint keeps output ownership aligned by `chown`-ing `/work/results` back to the detected UID after the run.
