@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Tuple
+from typing import Any, List, Tuple
 
 import cv2
 import exifread
@@ -300,14 +301,18 @@ def _convert_to_datetime(string: str) -> dt.datetime:
     )
 
 
-def _collect_file_summary(per_file_dir: Path) -> pd.DataFrame:
-    rows: list[tuple[str, str, str, float, int, int, float, int]] = []
+def _collect_file_summary(
+    per_file_dir: Path, stem_to_name: dict[str, str]
+) -> pd.DataFrame:
+    rows: list[tuple[str, str, str, float, int, int, float, int, str]] = []
     for directory in os.listdir(per_file_dir):
         labels_path = per_file_dir / directory / "labels"
         if not labels_path.exists():
             continue
+        resolved_name = stem_to_name.get(directory, directory)
         frame_labels: list[str] = []
         group_sizes: list[int] = []
+        geometry_entries: list[dict[str, Any]] = []
         for label_file in os.listdir(labels_path):
             with open(labels_path / label_file) as f:
                 group_size = 0
@@ -315,12 +320,30 @@ def _collect_file_summary(per_file_dir: Path) -> pd.DataFrame:
                     parts = line.rstrip().split(" ")
                     if len(parts) < 6:
                         continue
-                    cidx, *_rest, conf = parts
-                    if float(conf) > 0.25:
-                        frame_labels.append(NAMES.get(int(cidx), str(cidx)))
+                    cidx, x_center, y_center, width, height, conf = parts
+                    confidence = float(conf)
+                    if confidence > 0.25:
+                        class_idx = int(cidx)
+                        label_name = NAMES.get(class_idx, str(class_idx))
+                        frame_labels.append(label_name)
                         group_size += 1
+                        geometry_entries.append(
+                            {
+                                "frame": label_file.rsplit(".", 1)[0],
+                                "class_id": class_idx,
+                                "label": label_name,
+                                "confidence": confidence,
+                                "bbox": [
+                                    float(x_center),
+                                    float(y_center),
+                                    float(width),
+                                    float(height),
+                                ],
+                            }
+                        )
                 if group_size:
                     group_sizes.append(group_size)
+        geometry_json = json.dumps(geometry_entries, separators=(",", ":"))
         if frame_labels:
             s = pd.Series(frame_labels)
             top_label = s.value_counts().index.tolist()[0]
@@ -330,9 +353,20 @@ def _collect_file_summary(per_file_dir: Path) -> pd.DataFrame:
             confidence = top_count / max(n_objects, 1)
             mean_group = float(sum(group_sizes) / max(len(group_sizes), 1)) if group_sizes else 0.0
             max_group = int(max(group_sizes)) if group_sizes else 0
-            rows.append((directory, top_label, confidence, n_objects, n_frames, mean_group, max_group))
+            rows.append(
+                (
+                    resolved_name,
+                    top_label,
+                    confidence,
+                    n_objects,
+                    n_frames,
+                    mean_group,
+                    max_group,
+                    geometry_json,
+                )
+            )
         else:
-            rows.append((directory, "EMPTY", 0.0, 0, 0, 0.0, 0))
+            rows.append((resolved_name, "EMPTY", 0.0, 0, 0, 0.0, 0, geometry_json))
 
     df = pd.DataFrame(
         rows,
@@ -344,6 +378,7 @@ def _collect_file_summary(per_file_dir: Path) -> pd.DataFrame:
             "n_annotated_frames",
             "mean_group_size",
             "max_group_size",
+            "frame_geometries",
         ],
     )
     return df
@@ -353,9 +388,14 @@ def aggregate(cfg: Config, save_per_image: bool = False) -> AggregateResult:
     p = resolve_paths(cfg)
     p.per_camera_results_dir.mkdir(parents=True, exist_ok=True)
 
-    file_df = _collect_file_summary(p.per_file_root)
+    stem_to_name = {
+        Path(file_name).stem: file_name
+        for file_name in os.listdir(p.input_dir)
+        if (p.input_dir / file_name).is_file()
+    }
+    file_df = _collect_file_summary(p.per_file_root, stem_to_name)
+    file_df = file_df.sort_values("file_name")
     if save_per_image:
-        file_df = file_df.sort_values("file_name")
         file_df.to_csv(p.per_image_csv, index=False)
 
     # EXIF CSV must exist
@@ -365,6 +405,11 @@ def aggregate(cfg: Config, save_per_image: bool = False) -> AggregateResult:
     exif_df = pd.read_csv(p.exif_csv)
     exif_df["file_name"] = [i.split(".")[0] for i in exif_df["file_name"]]
     exif_sorted = exif_df.sort_values("date_exif")
+
+    file_df_for_join = file_df.copy()
+    file_df_for_join["file_name"] = file_df_for_join["file_name"].str.replace(
+        r"\.[^.]+$", "", regex=True
+    )
 
     # Group into sequences by <=10 seconds gaps
     timestamps = [_convert_to_datetime(x) for x in exif_sorted["date_exif"]]
@@ -382,7 +427,10 @@ def aggregate(cfg: Config, save_per_image: bool = False) -> AggregateResult:
     sequence_rows: list[Tuple[str, str, str, float, str, str, float, int, int, float, int, str]] = []
     for start, end in indices:
         seq_df = exif_sorted.iloc[start : end + 1]
-        joined_df = pd.merge(seq_df, file_df, how="left", on=["file_name"]).sort_values("file_name")
+        joined_df = (
+            pd.merge(seq_df, file_df_for_join, how="left", on=["file_name"])
+            .sort_values("file_name")
+        )
 
         if len(joined_df) == 1:
             joined_date = joined_df["date_exif"].iloc[0]
