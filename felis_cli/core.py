@@ -22,7 +22,7 @@ class PathsResolved:
     input_dir: Path
     results_root: Path
     per_file_root: Path
-    per_camera_results_dir: Path
+    results_dir: Path
     exif_csv: Path
     final_csv: Path
     per_image_csv: Path
@@ -48,24 +48,24 @@ def resolve_paths(cfg: Config) -> PathsResolved:
     )
     results_root = cfg.paths.output_root / cfg.paths.username
     per_file_root = results_root / cfg.paths.camera_id / cfg.paths.footage_date
-    per_camera_results_dir = results_root / cfg.paths.camera_id / "results"
+    results_dir = per_file_root / "results"
     exif_csv = (
-        per_camera_results_dir
+        results_dir
         / f"{cfg.paths.username}_{cfg.paths.camera_id}_{cfg.paths.footage_date}_exif.csv"
     )
     final_csv = (
-        per_camera_results_dir
+        results_dir
         / f"{cfg.paths.username}_{cfg.paths.camera_id}_{cfg.paths.footage_date}_results.csv"
     )
     per_image_csv = (
-        per_camera_results_dir
+        results_dir
         / f"{cfg.paths.username}_{cfg.paths.camera_id}_{cfg.paths.footage_date}_per_image.csv"
     )
     return PathsResolved(
         input_dir=input_dir,
         results_root=results_root,
         per_file_root=per_file_root,
-        per_camera_results_dir=per_camera_results_dir,
+        results_dir=results_dir,
         exif_csv=exif_csv,
         final_csv=final_csv,
         per_image_csv=per_image_csv,
@@ -129,7 +129,7 @@ def predict(cfg: Config) -> None:
 # --------------------
 def get_exif(cfg: Config) -> Tuple[pd.DataFrame, int]:
     p = resolve_paths(cfg)
-    p.per_camera_results_dir.mkdir(parents=True, exist_ok=True)
+    p.results_dir.mkdir(parents=True, exist_ok=True)
 
     rows: List[Tuple[str, str, float]] = []
     avi_count = 0
@@ -386,7 +386,7 @@ def _collect_file_summary(
 
 def aggregate(cfg: Config, save_per_image: bool = False) -> AggregateResult:
     p = resolve_paths(cfg)
-    p.per_camera_results_dir.mkdir(parents=True, exist_ok=True)
+    p.results_dir.mkdir(parents=True, exist_ok=True)
 
     stem_to_name = {
         Path(file_name).stem: file_name
