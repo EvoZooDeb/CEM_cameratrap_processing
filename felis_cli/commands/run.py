@@ -1,4 +1,7 @@
 from argparse import ArgumentParser
+import os
+from pathlib import Path
+import signal
 
 from cliff.command import Command
 
@@ -53,14 +56,35 @@ class RunPipeline(Command):
         }
         cfg = load_config(parsed_args.config, overrides)
 
-        self.app.stdout.write("[1/3] Predicting...\n")
-        predict(cfg)
+        cancellation_requested = False
+        cancel_file = os.environ.get("FELIS_CANCEL_FILE")
 
-        self.app.stdout.write("[2/3] Extracting EXIF...\n")
-        get_exif(cfg)
+        def cancellation_is_requested():
+            return cancellation_requested or (cancel_file and Path(cancel_file).exists())
 
-        self.app.stdout.write("[3/3] Aggregating...\n")
-        aggregate(cfg, save_per_image=parsed_args.save_per_image)
+        def request_cancellation(_signum, _frame):
+            nonlocal cancellation_requested
+            cancellation_requested = True
+            self.app.stdout.write("Cancellation requested; finalizing completed media only...\n")
+
+        previous_sigterm_handler = signal.signal(signal.SIGTERM, request_cancellation)
+        try:
+            self.app.stdout.write("[1/3] Predicting...\n")
+            completed_files = predict(cfg, should_cancel=cancellation_is_requested)
+
+            if cancellation_is_requested():
+                self.app.stdout.write("[cancelled] Writing partial EXIF and results...\n")
+                get_exif(cfg, include_files=set(completed_files))
+                aggregate(cfg, save_per_image=True, completed_files=completed_files)
+                return
+
+            self.app.stdout.write("[2/3] Extracting EXIF...\n")
+            get_exif(cfg)
+
+            self.app.stdout.write("[3/3] Aggregating...\n")
+            aggregate(cfg, save_per_image=parsed_args.save_per_image)
+        finally:
+            signal.signal(signal.SIGTERM, previous_sigterm_handler)
 
         if parsed_args.validate:
             self.app.stdout.write("[+] Validating (visual) ...\n")

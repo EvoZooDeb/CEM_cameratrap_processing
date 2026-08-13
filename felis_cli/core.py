@@ -5,7 +5,7 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, List, Tuple
+from typing import Any, Callable, List, Tuple
 
 import cv2
 import exifread
@@ -26,6 +26,7 @@ class PathsResolved:
     exif_csv: Path
     final_csv: Path
     per_image_csv: Path
+    progress_json: Path
 
 
 @dataclass
@@ -61,6 +62,10 @@ def resolve_paths(cfg: Config) -> PathsResolved:
         results_dir
         / f"{cfg.paths.username}_{cfg.paths.camera_id}_{cfg.paths.footage_date}_per_image.csv"
     )
+    progress_json = (
+        results_dir
+        / f"{cfg.paths.username}_{cfg.paths.camera_id}_{cfg.paths.footage_date}_progress.json"
+    )
     return PathsResolved(
         input_dir=input_dir,
         results_root=results_root,
@@ -69,19 +74,49 @@ def resolve_paths(cfg: Config) -> PathsResolved:
         exif_csv=exif_csv,
         final_csv=final_csv,
         per_image_csv=per_image_csv,
+        progress_json=progress_json,
     )
 
 
 # --------------------
 # Predict
 # --------------------
-def predict(cfg: Config) -> None:
+def _write_progress(paths: PathsResolved, completed_files: list[str], total_files: int) -> None:
+    """Persist completed media names so an interrupted run can be finalized safely."""
+    paths.results_dir.mkdir(parents=True, exist_ok=True)
+    temporary_path = paths.progress_json.with_suffix(".tmp")
+    temporary_path.write_text(
+        json.dumps(
+            {
+                "completed_files": completed_files,
+                "total_files": total_files,
+            }
+        ),
+        encoding="utf-8",
+    )
+    temporary_path.replace(paths.progress_json)
+
+
+def predict(
+    cfg: Config,
+    should_cancel: Callable[[], bool] | None = None,
+) -> list[str]:
     p = resolve_paths(cfg)
     p.per_file_root.mkdir(parents=True, exist_ok=True)
 
+    supported_files = [
+        file
+        for file in sorted(os.listdir(p.input_dir))
+        if file.lower().endswith((".jpg", ".png", ".mp4", ".avi", ".mov"))
+    ]
+    completed_files: list[str] = []
+    _write_progress(p, completed_files, len(supported_files))
+
     model = YOLO(str(cfg.predict.model_path))
 
-    for file in sorted(os.listdir(p.input_dir)):
+    for file in supported_files:
+        if should_cancel and should_cancel():
+            break
         stem = file.split(".")[0]
         dynamic_project_name = f"{cfg.paths.camera_id}/{cfg.paths.footage_date}/{stem}"
         full_path = str(p.input_dir / file)
@@ -121,19 +156,33 @@ def predict(cfg: Config) -> None:
             )
             # consume generator to execute
             for _ in results:
-                pass
+                if should_cancel and should_cancel():
+                    break
+
+            if should_cancel and should_cancel():
+                break
+
+        completed_files.append(file)
+        _write_progress(p, completed_files, len(supported_files))
+
+    return completed_files
 
 
 # --------------------
 # EXIF
 # --------------------
-def get_exif(cfg: Config) -> Tuple[pd.DataFrame, int]:
+def get_exif(
+    cfg: Config,
+    include_files: set[str] | None = None,
+) -> Tuple[pd.DataFrame, int]:
     p = resolve_paths(cfg)
     p.results_dir.mkdir(parents=True, exist_ok=True)
 
     rows: List[Tuple[str, str, float]] = []
     avi_count = 0
     for file in sorted(os.listdir(p.input_dir)):
+        if include_files is not None and file not in include_files:
+            continue
         full = p.input_dir / file
         try:
             if file.lower().endswith((".jpg", ".png")):
@@ -302,10 +351,17 @@ def _convert_to_datetime(string: str) -> dt.datetime:
 
 
 def _collect_file_summary(
-    per_file_dir: Path, stem_to_name: dict[str, str]
+    per_file_dir: Path,
+    stem_to_name: dict[str, str],
+    completed_files: list[str] | None = None,
 ) -> pd.DataFrame:
     rows: list[tuple[str, str, str, float, int, int, float, int, str]] = []
-    for directory in os.listdir(per_file_dir):
+    directories = (
+        [Path(file_name).stem for file_name in completed_files]
+        if completed_files is not None
+        else os.listdir(per_file_dir)
+    )
+    for directory in directories:
         labels_path = per_file_dir / directory / "labels"
         if not labels_path.exists():
             continue
@@ -384,7 +440,11 @@ def _collect_file_summary(
     return df
 
 
-def aggregate(cfg: Config, save_per_image: bool = False) -> AggregateResult:
+def aggregate(
+    cfg: Config,
+    save_per_image: bool = False,
+    completed_files: list[str] | None = None,
+) -> AggregateResult:
     p = resolve_paths(cfg)
     p.results_dir.mkdir(parents=True, exist_ok=True)
 
@@ -393,7 +453,7 @@ def aggregate(cfg: Config, save_per_image: bool = False) -> AggregateResult:
         for file_name in os.listdir(p.input_dir)
         if (p.input_dir / file_name).is_file()
     }
-    file_df = _collect_file_summary(p.per_file_root, stem_to_name)
+    file_df = _collect_file_summary(p.per_file_root, stem_to_name, completed_files)
     file_df = file_df.sort_values("file_name")
     if save_per_image:
         file_df.to_csv(p.per_image_csv, index=False)
