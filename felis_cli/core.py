@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
+import math
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, List, Tuple
@@ -26,6 +29,7 @@ class PathsResolved:
     exif_csv: Path
     final_csv: Path
     per_image_csv: Path
+    detections_dir: Path
     progress_json: Path
 
 
@@ -62,6 +66,7 @@ def resolve_paths(cfg: Config) -> PathsResolved:
         results_dir
         / f"{cfg.paths.username}_{cfg.paths.camera_id}_{cfg.paths.footage_date}_per_image.csv"
     )
+    detections_dir = results_dir / "detections"
     progress_json = (
         results_dir
         / f"{cfg.paths.username}_{cfg.paths.camera_id}_{cfg.paths.footage_date}_progress.json"
@@ -74,6 +79,7 @@ def resolve_paths(cfg: Config) -> PathsResolved:
         exif_csv=exif_csv,
         final_csv=final_csv,
         per_image_csv=per_image_csv,
+        detections_dir=detections_dir,
         progress_json=progress_json,
     )
 
@@ -353,9 +359,11 @@ def _convert_to_datetime(string: str) -> dt.datetime:
 def _collect_file_summary(
     per_file_dir: Path,
     stem_to_name: dict[str, str],
+    input_dir: Path,
+    detections_dir: Path,
     completed_files: list[str] | None = None,
 ) -> pd.DataFrame:
-    rows: list[tuple[str, str, str, float, int, int, float, int, str]] = []
+    rows: list[tuple[str, str, float, int, int, float, int]] = []
     directories = (
         [Path(file_name).stem for file_name in completed_files]
         if completed_files is not None
@@ -399,7 +407,12 @@ def _collect_file_summary(
                         )
                 if group_size:
                     group_sizes.append(group_size)
-        geometry_json = json.dumps(geometry_entries, separators=(",", ":"))
+        _write_detection_file(
+            detections_dir=detections_dir,
+            input_dir=input_dir,
+            file_name=resolved_name,
+            geometries=geometry_entries,
+        )
         if frame_labels:
             s = pd.Series(frame_labels)
             top_label = s.value_counts().index.tolist()[0]
@@ -418,11 +431,10 @@ def _collect_file_summary(
                     n_frames,
                     mean_group,
                     max_group,
-                    geometry_json,
                 )
             )
         else:
-            rows.append((resolved_name, "EMPTY", 0.0, 0, 0, 0.0, 0, geometry_json))
+            rows.append((resolved_name, "EMPTY", 0.0, 0, 0, 0.0, 0))
 
     df = pd.DataFrame(
         rows,
@@ -434,10 +446,69 @@ def _collect_file_summary(
             "n_annotated_frames",
             "mean_group_size",
             "max_group_size",
-            "frame_geometries",
         ],
     )
     return df
+
+
+def _detection_file_path(detections_dir: Path, file_name: str) -> Path:
+    """Return a filesystem-safe, stable detail-file path for one media file."""
+    digest = hashlib.sha256(file_name.encode("utf-8")).hexdigest()
+    return detections_dir / f"{digest}.json"
+
+
+def _video_fps(video_path: Path) -> float | None:
+    capture = cv2.VideoCapture(str(video_path))
+    try:
+        fps = float(capture.get(cv2.CAP_PROP_FPS))
+    finally:
+        capture.release()
+    return fps if math.isfinite(fps) and fps > 0 else None
+
+
+def _frame_index(frame_name: str) -> int | None:
+    match = re.search(r"_(\d+)$", frame_name)
+    return int(match.group(1)) if match else None
+
+
+def _write_detection_file(
+    detections_dir: Path,
+    input_dir: Path,
+    file_name: str,
+    geometries: list[dict[str, Any]],
+) -> None:
+    """Write detailed detections separately from the compact per-media CSV."""
+    path = _detection_file_path(detections_dir, file_name)
+    if not geometries:
+        path.unlink(missing_ok=True)
+        return
+
+    detections_dir.mkdir(parents=True, exist_ok=True)
+    is_video = Path(file_name).suffix.lower() in {".mp4", ".avi", ".mov"}
+    document: dict[str, Any] = {
+        "schema_version": 1,
+        "media_name": file_name,
+        "media_type": "video" if is_video else "image",
+        "detections": geometries,
+    }
+
+    if is_video:
+        fps = _video_fps(input_dir / file_name)
+        if fps is not None:
+            document["frame_rate"] = fps
+        for geometry in geometries:
+            index = _frame_index(str(geometry.get("frame", "")))
+            if index is None:
+                continue
+            geometry["frame_index"] = index
+            if fps is not None:
+                geometry["timestamp_seconds"] = (index - 1) / fps
+
+    temporary_path = path.with_suffix(".tmp")
+    temporary_path.write_text(
+        json.dumps(document, separators=(",", ":"), ensure_ascii=False), encoding="utf-8"
+    )
+    temporary_path.replace(path)
 
 
 def aggregate(
@@ -453,7 +524,13 @@ def aggregate(
         for file_name in os.listdir(p.input_dir)
         if (p.input_dir / file_name).is_file()
     }
-    file_df = _collect_file_summary(p.per_file_root, stem_to_name, completed_files)
+    file_df = _collect_file_summary(
+        p.per_file_root,
+        stem_to_name,
+        p.input_dir,
+        p.detections_dir,
+        completed_files,
+    )
     file_df = file_df.sort_values("file_name")
     if save_per_image:
         file_df.to_csv(p.per_image_csv, index=False)
