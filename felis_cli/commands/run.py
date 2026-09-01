@@ -10,33 +10,72 @@ from ..core import aggregate, get_exif, predict, validate
 
 
 class RunPipeline(Command):
-    """Run the pipeline: predict -> exif -> aggregate (optional validate)."""
+    """Run prediction, metadata extraction, aggregation, and optional validation."""
 
     def get_parser(self, prog_name):
-        parser = ArgumentParser(prog=prog_name)
-        parser.add_argument("--config", help="Path to YAML config file")
-        parser.add_argument("--input-root")
-        parser.add_argument("--output-root")
-        parser.add_argument("--username")
-        parser.add_argument("--camera-id")
-        parser.add_argument("--footage-date")
-        parser.add_argument("--model-path")
-        parser.add_argument("--device", default=None)
-        parser.add_argument("--imgsz", type=int, default=None)
-        parser.add_argument("--conf", type=float, default=None)
-        parser.add_argument("--iou", type=float, default=None)
-        parser.add_argument("--save-frames", action="store_true")
+        parser = ArgumentParser(
+            prog=prog_name,
+            description=(
+                "Run predict, exif, and aggregate in that order, then optionally validate "
+                "the saved detections. On SIGTERM or when FELIS_CANCEL_FILE exists, the command "
+                "writes EXIF and per-media summaries only for media completed before cancellation."
+            ),
+        )
+        parser.add_argument("--config", help="YAML configuration file. CLI values override it.")
+        parser.add_argument("--input-root", help="Base directory containing the raw survey data.")
+        parser.add_argument(
+            "--output-root", help="Base directory in which pipeline results are written."
+        )
+        parser.add_argument(
+            "--username", help="Survey or project name used in the input and output paths."
+        )
+        parser.add_argument("--camera-id", help="Camera unit identifier to process.")
+        parser.add_argument(
+            "--footage-date", help="Camera footage date used to select the input directory."
+        )
+        parser.add_argument("--model-path", help="Path to the YOLO model weights file.")
+        parser.add_argument(
+            "--device", default=None, help="Inference device, for example 'cuda:0' or 'cpu'."
+        )
+        parser.add_argument(
+            "--imgsz", type=int, default=None, help="YOLO inference image size in pixels."
+        )
+        parser.add_argument(
+            "--conf", type=float, default=None, help="Minimum YOLO detection confidence threshold."
+        )
+        parser.add_argument(
+            "--iou",
+            type=float,
+            default=None,
+            help="IoU threshold used by YOLO non-maximum suppression.",
+        )
+        parser.add_argument(
+            "--save-frames",
+            action="store_true",
+            help=(
+                "Save video frames during prediction so video detections can be visually "
+                "validated."
+            ),
+        )
         parser.add_argument(
             "--save-per-image",
             action="store_true",
-            help="Also write per-image summary CSV during aggregate",
+            help="Also write the per-media summary CSV during aggregation.",
         )
-        parser.add_argument("--validate", action="store_true", help="Run visual validation at the end")
-        parser.add_argument("--no-show", action="store_true", help="Do not show windows during validate")
+        parser.add_argument(
+            "--validate",
+            action="store_true",
+            help="Run visual validation after aggregation completes.",
+        )
+        parser.add_argument(
+            "--no-show",
+            action="store_true",
+            help="Do not open validation windows; useful in headless environments.",
+        )
         parser.add_argument(
             "--save-annotated",
             action="store_true",
-            help="Save annotated images during validate",
+            help="Write annotated validation overlays when --validate is also supplied.",
         )
         return parser
 

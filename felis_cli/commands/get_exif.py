@@ -7,17 +7,37 @@ from ..core import get_exif
 
 
 class GetExif(Command):
-    """Extract EXIF/metadata to CSV."""
+    """Extract capture timestamps and durations into the EXIF CSV."""
 
     def get_parser(self, prog_name):
-        parser = ArgumentParser(prog=prog_name)
-        parser.add_argument("--config", help="Path to YAML config file")
-        parser.add_argument("--input-root")
-        parser.add_argument("--output-root")
-        parser.add_argument("--username")
-        parser.add_argument("--camera-id")
-        parser.add_argument("--footage-date")
-        parser.add_argument("--model-path")  # required by config, but not used here
+        parser = ArgumentParser(
+            prog=prog_name,
+            description=(
+                "Create the camera-date EXIF CSV from the input directory. JPG and PNG "
+                "timestamps come from EXIF when available, otherwise file modification time; "
+                "MP4 and MOV timestamps and durations come from container metadata, with the "
+                "same modification-time fallback. AVI files are counted and skipped."
+            ),
+        )
+        parser.add_argument("--config", help="YAML configuration file. CLI values override it.")
+        parser.add_argument("--input-root", help="Base directory containing the raw survey data.")
+        parser.add_argument(
+            "--output-root", help="Base directory in which the EXIF CSV is written."
+        )
+        parser.add_argument(
+            "--username", help="Survey or project name used in the input and output paths."
+        )
+        parser.add_argument("--camera-id", help="Camera unit identifier to process.")
+        parser.add_argument(
+            "--footage-date", help="Camera footage date used to select the input directory."
+        )
+        parser.add_argument(
+            "--model-path",
+            help=(
+                "Path to YOLO weights; required by the shared configuration although EXIF "
+                "extraction does not use it."
+            ),
+        )
         return parser
 
     def take_action(self, parsed_args):
@@ -32,4 +52,3 @@ class GetExif(Command):
         cfg = load_config(parsed_args.config, overrides)
         df, avi_count = get_exif(cfg)
         self.app.stdout.write(f"Extracted {len(df)} records. AVI skipped: {avi_count}\n")
-

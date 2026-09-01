@@ -7,21 +7,40 @@ from ..core import aggregate
 
 
 class Aggregate(Command):
-    """Create per-sequence summary CSV from labels + EXIF."""
+    """Build sequence-level summaries from prediction labels and EXIF metadata."""
 
     def get_parser(self, prog_name):
-        parser = ArgumentParser(prog=prog_name)
-        parser.add_argument("--config", help="Path to YAML config file")
-        parser.add_argument("--input-root")
-        parser.add_argument("--output-root")
-        parser.add_argument("--username")
-        parser.add_argument("--camera-id")
-        parser.add_argument("--footage-date")
-        parser.add_argument("--model-path")  # required by config schema
+        parser = ArgumentParser(
+            prog=prog_name,
+            description=(
+                "Read YOLO labels and the existing EXIF CSV, summarize each media file, "
+                "and group captures occurring within 10 seconds of a sequence's first capture. "
+                "Writes the sequence CSV and per-media detection-detail JSON files."
+            ),
+        )
+        parser.add_argument("--config", help="YAML configuration file. CLI values override it.")
+        parser.add_argument("--input-root", help="Base directory containing the raw survey data.")
+        parser.add_argument(
+            "--output-root", help="Base directory containing prediction outputs and result CSVs."
+        )
+        parser.add_argument(
+            "--username", help="Survey or project name used in the input and output paths."
+        )
+        parser.add_argument("--camera-id", help="Camera unit identifier to process.")
+        parser.add_argument(
+            "--footage-date", help="Camera footage date used to select the input directory."
+        )
+        parser.add_argument(
+            "--model-path",
+            help=(
+                "Path to YOLO weights; required by the shared configuration although "
+                "aggregation does not use it."
+            ),
+        )
         parser.add_argument(
             "--save-per-image",
             action="store_true",
-            help="Also write per-image summary CSV",
+            help="Also write the per-media summary CSV alongside the sequence CSV.",
         )
         return parser
 

@@ -5,7 +5,11 @@ from cliff.commandmanager import CommandManager
 class FelisApp(App):
     def __init__(self) -> None:
         super().__init__(
-            description="FELIS camera trap pipeline CLI",
+            description=(
+                "Run the FELIS YOLO-based camera-trap processing pipeline. "
+                "Use a subcommand to predict detections, extract metadata, "
+                "aggregate results, validate overlays, or run the full workflow."
+            ),
             version="0.1.0",
             command_manager=CommandManager("felis.commands"),
             deferred_help=True,
@@ -25,4 +29,3 @@ class FelisApp(App):
         self.command_manager.add_command("validate", Validate)
         self.command_manager.add_command("aggregate", Aggregate)
         self.command_manager.add_command("run", RunPipeline)
-
