@@ -23,9 +23,11 @@ class FelisApp(App):
         from .commands.validate import Validate
         from .commands.aggregate import Aggregate
         from .commands.run import RunPipeline
+        from .commands.classify import Classify
 
         self.command_manager.add_command("predict", Predict)
         self.command_manager.add_command("exif", GetExif)
         self.command_manager.add_command("validate", Validate)
         self.command_manager.add_command("aggregate", Aggregate)
         self.command_manager.add_command("run", RunPipeline)
+        self.command_manager.add_command("classify", Classify)

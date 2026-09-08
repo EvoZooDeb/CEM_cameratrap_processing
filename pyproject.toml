@@ -26,6 +26,12 @@ dependencies = [
   "pyyaml",
 ]
 
+[project.optional-dependencies]
+two-stage = [
+  "PytorchWildlife",
+  "tensorflow",
+]
+
 [project.scripts]
 felis = "felis:main"
 
@@ -34,4 +40,3 @@ py-modules = ["felis"]
 
 [tool.setuptools.packages.find]
 include = ["felis_cli*"]
-

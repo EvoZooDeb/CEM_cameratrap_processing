@@ -33,6 +33,15 @@ class Predict(Command):
             "--footage-date", help="Camera footage date used to select the input directory."
         )
         parser.add_argument("--model-path", help="Path to the YOLO model weights file.")
+        parser.add_argument("--strategy", choices=["single_stage", "two_stage"])
+        parser.add_argument("--detector", choices=["best_27", "mdv6", "deepfaune_1.4", "best_28"])
+        parser.add_argument(
+            "--classifier",
+            choices=["deepfaune_classifier", "4_camtrap", "2_artiodactyla", "2_carnivora"],
+        )
+        parser.add_argument(
+            "--models-dir", help="Directory containing fixed two-stage model files."
+        )
         parser.add_argument(
             "--device", default=None, help="Inference device, for example 'cuda:0' or 'cpu'."
         )
@@ -71,6 +80,10 @@ class Predict(Command):
             "conf": parsed_args.conf,
             "iou": parsed_args.iou,
             "save_frames": parsed_args.save_frames,
+            "strategy": parsed_args.strategy,
+            "detector": parsed_args.detector,
+            "classifier": parsed_args.classifier,
+            "models_dir": parsed_args.models_dir,
         }
         cfg = load_config(parsed_args.config, overrides)
         predict(cfg)

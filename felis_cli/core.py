@@ -31,6 +31,7 @@ class PathsResolved:
     per_image_csv: Path
     detections_dir: Path
     progress_json: Path
+    two_stage_json: Path
 
 
 @dataclass
@@ -71,6 +72,10 @@ def resolve_paths(cfg: Config) -> PathsResolved:
         results_dir
         / f"{cfg.paths.username}_{cfg.paths.camera_id}_{cfg.paths.footage_date}_progress.json"
     )
+    two_stage_json = (
+        results_dir
+        / f"{cfg.paths.username}_{cfg.paths.camera_id}_{cfg.paths.footage_date}_two_stage.json"
+    )
     return PathsResolved(
         input_dir=input_dir,
         results_root=results_root,
@@ -81,6 +86,7 @@ def resolve_paths(cfg: Config) -> PathsResolved:
         per_image_csv=per_image_csv,
         detections_dir=detections_dir,
         progress_json=progress_json,
+        two_stage_json=two_stage_json,
     )
 
 
@@ -118,7 +124,18 @@ def predict(
     completed_files: list[str] = []
     _write_progress(p, completed_files, len(supported_files))
 
-    model = YOLO(str(cfg.predict.model_path))
+    model_path = cfg.predict.model_path
+    if cfg.two_stage.strategy == "two_stage":
+        detector_weights = {
+            "best_27": "best_27.pt",
+            "mdv6": "md_v1000.0.0-redwood.pt",
+            "deepfaune_1.4": "deepfaune_1.4.pt",
+            "best_28": "best_28.pt",
+        }[cfg.two_stage.detector]
+        model_path = cfg.two_stage.models_dir / detector_weights
+    if not model_path.exists():
+        raise FileNotFoundError(f"Detector weights not found: {model_path}")
+    model = YOLO(str(model_path))
 
     for file in supported_files:
         if should_cancel and should_cancel():
@@ -144,7 +161,8 @@ def predict(
             results = model.predict(
                 full_path,
                 save=False,
-                save_frames=cfg.predict.save_frames,
+                # Classification needs the original video frames for its crops.
+                save_frames=cfg.predict.save_frames or cfg.two_stage.strategy == "two_stage",
                 save_txt=True,
                 save_conf=True,
                 show_labels=False,
@@ -172,6 +190,181 @@ def predict(
         _write_progress(p, completed_files, len(supported_files))
 
     return completed_files
+
+
+# --------------------
+# Two-stage classification (internal intermediate data only)
+# --------------------
+_DETECTOR_CLASSES = {
+    "best_27": {"animal": {0}, "passthrough": {1: "Person", 2: "Vehicle"}},
+    "mdv6": {"animal": {0}, "passthrough": {1: "Person", 2: "Vehicle"}},
+    "deepfaune_1.4": {"animal": {0}, "passthrough": {1: "Person", 2: "Vehicle"}},
+    "best_28": {"animal": {0, 3}, "passthrough": {1: "Person", 2: "Vehicle"}},
+}
+
+
+def _classification_classes(path: Path) -> list[str]:
+    """Read the fixed, output-index ordered class list beside a Keras model."""
+    classes_path = path.with_suffix(".classes.txt")
+    if not classes_path.exists():
+        raise FileNotFoundError(
+            f"Classifier class list not found: {classes_path}. "
+            "Create one line per output class, in model-output order."
+        )
+    classes = [line.strip() for line in classes_path.read_text(encoding="utf-8").splitlines()]
+    classes = [name for name in classes if name]
+    if not classes:
+        raise ValueError(f"Classifier class list is empty: {classes_path}")
+    return classes
+
+
+def _load_classifier(cfg: Config) -> tuple[Callable[[Any], tuple[str, float]], str]:
+    """Load the selected classifier lazily so single-stage installs stay lightweight."""
+    classifier = cfg.two_stage.classifier
+    if classifier == "deepfaune_classifier":
+        try:
+            from PytorchWildlife.models import classification as pw_classification
+        except ImportError as exc:
+            raise RuntimeError(
+                "DeepFaune classification requires PytorchWildlife to be installed locally."
+            ) from exc
+
+        model = pw_classification.DeepfauneClassifier(device=cfg.predict.device)
+
+        def classify(image: Any) -> tuple[str, float]:
+            result = model.single_image_classification(cv2.resize(image, (224, 224)))
+            label = str(result["prediction"])
+            confidences = result.get("all_confidences", [])
+            confidence = next((float(score) for name, score in confidences if name == label), 0.0)
+            return _normalise_deepfaune_label(label), confidence
+
+        return classify, "deepfaune"
+
+    weights = cfg.two_stage.models_dir / f"{classifier}.keras"
+    if not weights.exists():
+        raise FileNotFoundError(f"Classifier weights not found: {weights}")
+    try:
+        import numpy as np
+        import tensorflow as tf
+    except ImportError as exc:
+        raise RuntimeError(
+            "EfficientNet classification requires TensorFlow to be installed locally."
+        ) from exc
+    classes = _classification_classes(weights)
+    model = tf.keras.models.load_model(weights)
+
+    def classify(image: Any) -> tuple[str, float]:
+        resized = cv2.resize(image, (380, 380))
+        batch = np.expand_dims(resized.astype("float32") / 255.0, axis=0)
+        scores = model.predict(batch, verbose=0)[0]
+        if len(scores) != len(classes):
+            raise ValueError(
+                f"Model output has {len(scores)} classes, but "
+                f"{weights.with_suffix('.classes.txt')} "
+                f"contains {len(classes)} names."
+            )
+        index = int(np.argmax(scores))
+        return classes[index], float(scores[index])
+
+    return classify, "efficientnet"
+
+
+def _normalise_deepfaune_label(label: str) -> str:
+    return {
+        "badger": "Meles_meles",
+        "red deer": "Cervus_elaphus",
+        "cat": "Felis_silvestris",
+        "roe deer": "Capreolus_capreolus",
+        "dog": "Dog",
+        "wolf": "Canis_lupus",
+        "mouflon": "Ovis_orientalis",
+        "fox": "Vulpes_vulpes",
+        "wild boar": "Sus_scrofa",
+    }.get(label, label.replace(" ", "_"))
+
+
+def _square_crop(image: Any, bbox: list[float]) -> Any | None:
+    """Crop the centred square used by the original two-stage analysis scripts."""
+    height, width = image.shape[:2]
+    x_center, y_center, box_width, box_height = bbox
+    half_size = max(box_width * width, box_height * height) / 2
+    x_center *= width
+    y_center *= height
+    x_min, x_max = int(x_center - half_size), int(x_center + half_size)
+    y_min, y_max = int(y_center - half_size), int(y_center + half_size)
+    if x_min < 0:
+        x_max -= x_min
+        x_min = 0
+    if x_max > width:
+        x_min -= x_max - width
+        x_max = width
+    if y_min < 0:
+        y_max -= y_min
+        y_min = 0
+    if y_max > height:
+        y_min -= y_max - height
+        y_max = height
+    x_min, y_min = max(0, x_min), max(0, y_min)
+    crop = image[y_min:y_max, x_min:x_max]
+    return crop if crop.size else None
+
+
+def _source_for_label(p: PathsResolved, media_name: str, label_file: Path) -> Path | None:
+    media_path = p.input_dir / media_name
+    if media_path.suffix.lower() in {".jpg", ".png"}:
+        return media_path
+    stem = media_path.stem
+    label_stem = label_file.stem
+    frame_stem = label_stem.removeprefix(f"{stem}_")
+    frames_dir = p.per_file_root / stem / f"{stem}_frames"
+    for extension in (".jpg", ".JPG", ".png", ".PNG"):
+        candidate = frames_dir / f"{frame_stem}{extension}"
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def classify(cfg: Config, completed_files: list[str] | None = None) -> None:
+    """Classify saved detector boxes and persist only a private intermediate mapping."""
+    if cfg.two_stage.strategy != "two_stage":
+        return
+    p = resolve_paths(cfg)
+    classify_crop, _ = _load_classifier(cfg)
+    detector_classes = _DETECTOR_CLASSES[cfg.two_stage.detector]
+    media_names = (
+        completed_files if completed_files is not None else sorted(os.listdir(p.input_dir))
+    )
+    predictions: dict[str, dict[str, Any]] = {}
+    for media_name in media_names:
+        stem = Path(media_name).stem
+        labels_dir = p.per_file_root / stem / "labels"
+        if not labels_dir.exists():
+            continue
+        for label_file in sorted(labels_dir.glob("*.txt")):
+            source = _source_for_label(p, media_name, label_file)
+            image = cv2.imread(str(source)) if source else None
+            if image is None:
+                continue
+            for line_number, line in enumerate(label_file.read_text(encoding="utf-8").splitlines()):
+                parts = line.split()
+                if len(parts) < 6:
+                    continue
+                class_id = int(float(parts[0]))
+                key = f"{stem}/labels/{label_file.name}:{line_number}"
+                if class_id in detector_classes["passthrough"]:
+                    predictions[key] = {
+                        "label": detector_classes["passthrough"][class_id],
+                        "confidence": float(parts[5]),
+                    }
+                elif class_id in detector_classes["animal"]:
+                    crop = _square_crop(image, [float(value) for value in parts[1:5]])
+                    if crop is not None:
+                        label, confidence = classify_crop(crop)
+                        predictions[key] = {"label": label, "confidence": confidence}
+    p.results_dir.mkdir(parents=True, exist_ok=True)
+    temporary_path = p.two_stage_json.with_suffix(".tmp")
+    temporary_path.write_text(json.dumps(predictions, ensure_ascii=False), encoding="utf-8")
+    temporary_path.replace(p.two_stage_json)
 
 
 # --------------------
@@ -361,6 +554,7 @@ def _collect_file_summary(
     stem_to_name: dict[str, str],
     input_dir: Path,
     detections_dir: Path,
+    classified_labels: dict[str, dict[str, Any]] | None = None,
     completed_files: list[str] | None = None,
 ) -> pd.DataFrame:
     rows: list[tuple[str, str, float, int, int, float, int]] = []
@@ -380,7 +574,7 @@ def _collect_file_summary(
         for label_file in os.listdir(labels_path):
             with open(labels_path / label_file) as f:
                 group_size = 0
-                for line in f.readlines():
+                for line_number, line in enumerate(f.readlines()):
                     parts = line.rstrip().split(" ")
                     if len(parts) < 6:
                         continue
@@ -388,7 +582,13 @@ def _collect_file_summary(
                     confidence = float(conf)
                     if confidence > 0.25:
                         class_idx = int(cidx)
-                        label_name = NAMES.get(class_idx, str(class_idx))
+                        prediction_key = f"{directory}/labels/{label_file}:{line_number}"
+                        classified = (classified_labels or {}).get(prediction_key)
+                        label_name = (
+                            str(classified["label"])
+                            if classified is not None
+                            else NAMES.get(class_idx, str(class_idx))
+                        )
                         frame_labels.append(label_name)
                         group_size += 1
                         geometry_entries.append(
@@ -524,11 +724,22 @@ def aggregate(
         for file_name in os.listdir(p.input_dir)
         if (p.input_dir / file_name).is_file()
     }
+    classified_labels: dict[str, dict[str, Any]] | None = None
+    if cfg.two_stage.strategy == "two_stage":
+        if not p.two_stage_json.exists():
+            raise FileNotFoundError(
+                "Two-stage classifications not found. Run 'felis classify' before aggregation."
+            )
+        raw_predictions = json.loads(p.two_stage_json.read_text(encoding="utf-8"))
+        if not isinstance(raw_predictions, dict):
+            raise ValueError(f"Invalid two-stage classification data: {p.two_stage_json}")
+        classified_labels = raw_predictions
     file_df = _collect_file_summary(
         p.per_file_root,
         stem_to_name,
         p.input_dir,
         p.detections_dir,
+        classified_labels,
         completed_files,
     )
     file_df = file_df.sort_values("file_name")

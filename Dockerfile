@@ -33,7 +33,7 @@ RUN pip install -r requirements.txt
 COPY pyproject.toml README.md ./
 COPY felis.py ./
 COPY felis_cli ./felis_cli
-RUN pip install .
+RUN pip install '.[two-stage]'
 
 # Non-root user for runtime
 RUN useradd -m appuser && chown -R appuser:appuser /app

@@ -32,9 +32,20 @@ class PredictParams:
 
 
 @dataclass
+class TwoStageParams:
+    """Settings for detector-plus-classifier inference."""
+
+    strategy: str = "two_stage"
+    detector: str = "best_27"
+    classifier: str = "deepfaune_classifier"
+    models_dir: Path = Path("models")
+
+
+@dataclass
 class Config:
     paths: Paths
     predict: PredictParams
+    two_stage: TwoStageParams
 
 
 def _env(key: str, default: Optional[str] = None) -> Optional[str]:
@@ -54,6 +65,10 @@ def _from_env() -> Dict[str, Any]:
         "conf": _env("FELIS_CONF"),
         "iou": _env("FELIS_IOU"),
         "save_frames": _env("FELIS_SAVE_FRAMES"),
+        "strategy": _env("FELIS_STRATEGY"),
+        "detector": _env("FELIS_DETECTOR"),
+        "classifier": _env("FELIS_CLASSIFIER"),
+        "models_dir": _env("FELIS_MODELS_DIR"),
     }
 
 
@@ -105,6 +120,26 @@ def load_config(
     conf = float(data.get("conf", 0.25))
     iou = float(data.get("iou", 0.45))
     save_frames = str(data.get("save_frames", "false")).lower() in {"1", "true", "yes"}
+    strategy = str(data.get("strategy", "two_stage"))
+    detector = str(data.get("detector", "best_27"))
+    classifier = str(data.get("classifier", "deepfaune_classifier"))
+    models_dir = Path(data.get("models_dir", "models")).expanduser()
+
+    if strategy not in {"single_stage", "two_stage"}:
+        raise SystemExit("strategy must be 'single_stage' or 'two_stage'")
+    detector_classifiers = {
+        "best_27": {"deepfaune_classifier", "4_camtrap"},
+        "mdv6": {"deepfaune_classifier", "4_camtrap"},
+        "deepfaune_1.4": {"deepfaune_classifier", "4_camtrap"},
+        "best_28": {"2_artiodactyla", "2_carnivora"},
+    }
+    if strategy == "two_stage":
+        if detector not in detector_classifiers:
+            raise SystemExit(f"Unknown two-stage detector: {detector}")
+        if classifier not in detector_classifiers[detector]:
+            raise SystemExit(
+                f"Classifier '{classifier}' is not supported with detector '{detector}'"
+            )
 
     return Config(
         paths=Paths(
@@ -122,5 +157,10 @@ def load_config(
             iou=iou,
             save_frames=save_frames,
         ),
+        two_stage=TwoStageParams(
+            strategy=strategy,
+            detector=detector,
+            classifier=classifier,
+            models_dir=models_dir,
+        ),
     )
-
