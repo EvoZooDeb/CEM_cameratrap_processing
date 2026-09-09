@@ -128,7 +128,7 @@ def predict(
     if cfg.two_stage.strategy == "two_stage":
         detector_weights = {
             "best_27": "best_27.pt",
-            "mdv6": "md_v1000.0.0-redwood.pt",
+            "mdv6": "MDV6-yolov10-c.pt",
             "deepfaune_1.4": "deepfaune_1.4.pt",
             "best_28": "best_28.pt",
         }[cfg.two_stage.detector]
@@ -158,11 +158,14 @@ def predict(
                 device=cfg.predict.device,
             )
         elif file.lower().endswith((".mp4", ".avi", ".mov")):
+            save_video_frames = (
+                cfg.predict.save_frames or cfg.two_stage.strategy == "two_stage"
+            )
             results = model.predict(
                 full_path,
-                save=False,
-                # Classification needs the original video frames for its crops.
-                save_frames=cfg.predict.save_frames or cfg.two_stage.strategy == "two_stage",
+                # Ultralytics writes individual frames only through its normal save path.
+                save=save_video_frames,
+                save_frames=save_video_frames,
                 save_txt=True,
                 save_conf=True,
                 show_labels=False,
@@ -315,10 +318,9 @@ def _source_for_label(p: PathsResolved, media_name: str, label_file: Path) -> Pa
         return media_path
     stem = media_path.stem
     label_stem = label_file.stem
-    frame_stem = label_stem.removeprefix(f"{stem}_")
     frames_dir = p.per_file_root / stem / f"{stem}_frames"
     for extension in (".jpg", ".JPG", ".png", ".PNG"):
-        candidate = frames_dir / f"{frame_stem}{extension}"
+        candidate = frames_dir / f"{label_stem}{extension}"
         if candidate.exists():
             return candidate
     return None
@@ -494,7 +496,7 @@ def validate(cfg: Config, show: bool = True, save_annotated: bool = False) -> No
         frames_dir = base_dir / stem / f"{stem}_frames"
         if frames_dir.exists():
             for i, frame_name in enumerate(sorted(os.listdir(frames_dir))):
-                ann_name = f"{stem}_{frame_name.split('.', 1)[0]}.txt"
+                ann_name = f"{Path(frame_name).stem}.txt"
                 frame = cv2.imread(str(frames_dir / frame_name))
                 if frame is None:
                     continue
