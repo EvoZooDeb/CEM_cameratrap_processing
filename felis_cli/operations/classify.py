@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any, Callable
 
@@ -16,6 +17,39 @@ _DETECTOR_CLASSES = {
     "deepfaune_1.4": {"animal": {0}, "passthrough": {1: "Person", 2: "Vehicle"}},
     "best_28": {"animal": {0, 3}, "passthrough": {1: "Person", 2: "Vehicle"}},
 }
+
+
+def _is_cpu_device(device: str) -> bool:
+    """Return whether a configured inference device explicitly selects the CPU."""
+    return device.strip().lower() in {"cpu", "cpu:0", "/cpu:0", "/device:cpu:0"}
+
+
+def _prepare_backend_environment(device: str) -> None:
+    """Disable CUDA discovery before importing an ML backend when CPU was requested."""
+    if not _is_cpu_device(device):
+        return
+
+    os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+    try:
+        current_log_level = int(os.environ.get("TF_CPP_MIN_LOG_LEVEL", "0"))
+    except ValueError:
+        current_log_level = 0
+    os.environ["TF_CPP_MIN_LOG_LEVEL"] = str(max(current_log_level, 1))
+
+
+def _tensorflow_device(device: str) -> str:
+    """Translate documented FELIS device names to TensorFlow device names."""
+    normalized = device.strip().lower()
+    if _is_cpu_device(normalized):
+        return "/CPU:0"
+
+    match = re.fullmatch(r"(?:cuda|gpu)(?::(\d+))?", normalized)
+    if match:
+        return f"/GPU:{match.group(1) or '0'}"
+
+    raise ValueError(
+        f"Unsupported TensorFlow device '{device}'. Use 'cpu' or 'cuda:<index>'."
+    )
 
 
 def _classification_classes(path: Path) -> list[str]:
@@ -35,6 +69,7 @@ def _classification_classes(path: Path) -> list[str]:
 
 def _load_classifier(cfg: Config) -> tuple[Callable[[Any], tuple[str, float]], str]:
     """Load the selected classifier lazily so single-stage installs stay lightweight."""
+    _prepare_backend_environment(cfg.predict.device)
     classifier = cfg.two_stage.classifier
     if classifier == "deepfaune_classifier":
         try:
@@ -65,13 +100,23 @@ def _load_classifier(cfg: Config) -> tuple[Callable[[Any], tuple[str, float]], s
         raise RuntimeError(
             "EfficientNet classification requires TensorFlow to be installed locally."
         ) from exc
+    tensorflow_device = _tensorflow_device(cfg.predict.device)
+    if _is_cpu_device(cfg.predict.device):
+        try:
+            tf.config.set_visible_devices([], "GPU")
+        except RuntimeError as exc:
+            raise RuntimeError(
+                "TensorFlow was initialized before FELIS could disable GPU devices."
+            ) from exc
     classes = _classification_classes(weights)
-    model = tf.keras.models.load_model(weights)
+    with tf.device(tensorflow_device):
+        model = tf.keras.models.load_model(weights)
 
     def classify(image: Any) -> tuple[str, float]:
         resized = cv2.resize(image, (380, 380))
         batch = np.expand_dims(resized.astype("float32") / 255.0, axis=0)
-        scores = model.predict(batch, verbose=0)[0]
+        with tf.device(tensorflow_device):
+            scores = model.predict(batch, verbose=0)[0]
         if len(scores) != len(classes):
             raise ValueError(
                 f"Model output has {len(scores)} classes, but "
@@ -180,4 +225,3 @@ def classify(cfg: Config, completed_files: list[str] | None = None) -> None:
     temporary_path = p.two_stage_json.with_suffix(".tmp")
     temporary_path.write_text(json.dumps(predictions, ensure_ascii=False), encoding="utf-8")
     temporary_path.replace(p.two_stage_json)
-

@@ -1,0 +1,22 @@
+
+Az egylépéses detektálásnál tapasztalatunk szerint is pontosabb a kétlépéses detektálás. Tehát egy YOLO detektáló helyett, ami egyből faj szinten detektál, egy "általánosabb" modellt használunk az első lépésben, aminek kimenetele a bounding box lokációk valamint annyi, hogy: "állat", "ember", "jármű", esetleg rend kategória "carnivora", "artiodactyla". Elsőre példa a "best_27" modellunk, a DeepFaune detektora, valamint a MegaDetector modellek, rend szintűre példa a "best_28". Mivel az összes detektor YOLO alapú (beleértve a MegaDetector különböző verzióit és a DeepFaune modellt is) ezért ezek futtatására a korábbi predict_yolo.py script alkalmas. A második lépésben a detektált állatokat faj szinten próbáljuk besorolni, képosztályozó modellek segítségével. Itt két választási lehetőség van DeepFaune modellje, vagy saját EfficientNet modelljeink (2_artiodactyla csak párosujjú patás fajokat ismeri, 2_carnivora csak ragadozókat ismeri, 4_camtrap az összes emlős fajt ismeri. Tehát attól függően milyen detektort alkalmazunk az első lépésben, tetszőleges kép osztályozót szúrhatunk be mögé a második lépésben. Ezért az oldalon lehetne ezt akár külön paraméterezni is pl: válassz detektáló modellt és válassz osztályozó modellt. Tudok írni részletesebb magyarázó szöveget ha van rá szükség. Itt a következő tanulságokat vontuk le:
+
+    Az egylépéses detektálás lényegesebb gyorsabb 4-8 szorosan akár, de 5-10%-al pontatlanabb ('accuracy' mint mérőszám).
+    Az első lépésben rend detektálás számunkra nem bizonyult hasznosnak, így az ajánlott párosítások: best_27 + 4_camtrap, best_27 + DeepFaune_class, MD + DeepFaune_class, MD + 4_camtrap. Hogy ezek közül melyik a legjobb nem tudjuk, ilyen formában nem lettek összehasonlítva. Érzésem szerint best_27 + DeepFaune_class a legpontosabb és majdnem a leglassabb (MD + DeepFaune_class kicsit pontatlanabb és kicsit lassabb kéne legyen), ez lehetne az alapértelmezett beállítás. A DeepFaune azontúl, hogy a mi emlőseinkkel is szuperül működik, sokkal tobb osztályt kezel, többek közt madarakat vagy lovakat. Amennyiben a lehető legpontosabb eszközt akarjuk kínálni bele kellene vennünk ezeket a külsős modelleket is a felkínált opciók közé, kérdés így mennyire vagyunk "élősködők" rajtuk és mennyire szorulnak háttérbe a saját eredményeink.
+
+
+A kétlépéses osztályozás futtatására alapvetően két mód van: egyeduálló framenként (analyze_frames_modelltype.py scriptek) vagy szekvenciák (analyze_sequences_modelltype.py scriptek) alapján prediktálás. A szekvenciákat ez esetben a file nevekből rekonstruáltam, de van scriptem ami exif infó alapján teszi ezt, ha a nevezékten nem megfelelő. Ezekben a scriptekben lényegében a detektáló által kimentett '.txt' fileok feldolgozása történik, bounding boxok kivágása, átméretezése, valamint az adott osztályozó modell futtatási. Eredményekből '.csv' file készül. Itt azt tapasztaltuk:
+
+    A szekvenciákon bármilyen modell kombináció pontosabb (6-12%) fajhatározást eredményez mint a framenkénti prediktálás.
+
+Az új modellekhez szükséges scriptek kicsit jobban rendezve / letisztítva már itt vannak: https://github.com/EvoZooDeb/CEM_cameratrap_processing/tree/main/analysis/scripts.
+
+MegaDetector modellek megtalálhatóak a git oldalakon: https://github.com/agentmorris/MegaDetector#how-do-i-get-started-with-megadetector vagy https://github.com/microsoft/megadetector. A DeepFaune modellek itt: https://www.deepfaune.cnrs.fr/en/ vagy ahogy korábban említettem a 'PytorchWildlife' library-vel lekellene, hogy jöjjenek.
+
+A fejembe a struktúra valami hasonló 'Advance options' lenyíló fül alatt:
+
+    Válassz detektálási stratégiát (egylépéses +speed -accuracy / kétlépéses)
+    (Conditional: kétlépéses választása esetén): Válassz detektáló ("best_27", "MDV6", "DF1.3", "best_28") és osztályozó ("DF_class",  "2_artiodactyla", "2_carnivora", "4_camtrap"). Itt, hogy mik a választható osztályozók a kiválasztott detektálótól függ, az  "2_artiodactyla" és "2_carnivora" csak a "best_28" esetén érelmezhető, a másik kettő oszátlyozó a maradék 3 detektáló esetén.
+    Válassz modell paramétereket: confidence, iou, gpu/cpu, felhaszálónév, + bármi egyéb amit lehet paramérezni.
+
+Szívesen válaszolok a felmerülő kérdésekre

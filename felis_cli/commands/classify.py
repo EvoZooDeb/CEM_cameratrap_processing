@@ -24,6 +24,9 @@ class Classify(Command):
             choices=["deepfaune_classifier", "4_camtrap", "2_artiodactyla", "2_carnivora"],
         )
         parser.add_argument("--models-dir")
+        parser.add_argument(
+            "--device", default=None, help="Inference device, for example 'cuda:0' or 'cpu'."
+        )
         return parser
 
     def take_action(self, parsed_args):
