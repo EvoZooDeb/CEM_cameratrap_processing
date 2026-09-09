@@ -6,7 +6,11 @@ import signal
 from cliff.command import Command
 
 from ..config import load_config
-from ..core import aggregate, classify, get_exif, predict, validate
+from ..operations.aggregate import aggregate
+from ..operations.classify import classify
+from ..operations.exif import get_exif
+from ..operations.predict import predict
+from ..operations.validate import validate
 
 
 class RunPipeline(Command):

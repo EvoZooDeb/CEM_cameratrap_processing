@@ -3,7 +3,7 @@ from argparse import ArgumentParser
 from cliff.command import Command
 
 from ..config import load_config
-from ..core import classify
+from ..operations.classify import classify
 
 
 class Classify(Command):

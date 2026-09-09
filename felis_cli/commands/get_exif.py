@@ -3,7 +3,7 @@ from argparse import ArgumentParser
 from cliff.command import Command
 
 from ..config import load_config
-from ..core import get_exif
+from ..operations.exif import get_exif
 
 
 class GetExif(Command):
