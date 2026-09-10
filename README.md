@@ -80,12 +80,12 @@ The environment variable equivalents are `FELIS_INPUT_ROOT`,
 
 `two_stage` is the default strategy. It first detects broad categories and then
 classifies animal crops to species level. Supported detector/classifier pairs are
-`best_27`, `mdv6`, or `deepfaune_1.4` with `deepfaune_classifier` or `4_camtrap`,
+`best_27`, `mdv6`, or `deepfaune` with `deepfaune_classifier` or `4_camtrap`,
 and `best_28` with `2_artiodactyla` or `2_carnivora`.
 
 All weights must be present locally in `models_dir`: `best_27.pt`,
 `md_v1000.0.0-redwood.pt`,
-`deepfaune_1.4.pt`, `best_28.pt`, and the applicable `.keras` classifier file.
+`deepfaune-yolov8s_960.pt`, `best_28.pt`, and the applicable `.keras` classifier file.
 Each Keras classifier additionally needs a same-named `.classes.txt` file with
 one output class per line in model-output order. DeepFaune resources must already
 be available to the locally installed PytorchWildlife runtime.
@@ -93,6 +93,24 @@ be available to the locally installed PytorchWildlife runtime.
 ## Commands
 
 Use `felis <command> --help` for the complete option reference.
+
+### Output verbosity
+
+Verbosity is handled consistently by every command. With no verbosity flag,
+FELIS reports pipeline stages, progress for each media file, and final summaries.
+Use the global flags before the subcommand:
+
+```bash
+felis -q classify --config .felis.yml       # warnings and errors only
+felis -v classify --config .felis.yml       # per-frame/label/crop details
+felis -vv classify --config .felis.yml      # backend and configuration diagnostics
+felis --log-file felis.log run --config .felis.yml
+```
+
+Normal and quiet modes suppress Ultralytics' frame-by-frame output. `-v` enables
+that backend progress, while `-vv` also exposes otherwise noisy third-party
+diagnostics. Messages written to a `--log-file` include FELIS detail records even
+when the console is quiet.
 
 ### `felis predict`
 

@@ -34,7 +34,7 @@ class Predict(Command):
         )
         parser.add_argument("--model-path", help="Path to the YOLO model weights file.")
         parser.add_argument("--strategy", choices=["single_stage", "two_stage"])
-        parser.add_argument("--detector", choices=["best_27", "mdv6", "deepfaune_1.4", "best_28"])
+        parser.add_argument("--detector", choices=["best_27", "mdv6", "deepfaune", "best_28"])
         parser.add_argument(
             "--classifier",
             choices=["deepfaune_classifier", "4_camtrap", "2_artiodactyla", "2_carnivora"],

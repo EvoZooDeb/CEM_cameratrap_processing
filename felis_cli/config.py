@@ -130,7 +130,7 @@ def load_config(
     detector_classifiers = {
         "best_27": {"deepfaune_classifier", "4_camtrap"},
         "mdv6": {"deepfaune_classifier", "4_camtrap"},
-        "deepfaune_1.4": {"deepfaune_classifier", "4_camtrap"},
+        "deepfaune": {"deepfaune_classifier", "4_camtrap"},
         "best_28": {"2_artiodactyla", "2_carnivora"},
     }
     if strategy == "two_stage":

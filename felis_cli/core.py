@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+import logging
 import math
 import os
 import re
@@ -18,6 +19,10 @@ from ultralytics import YOLO
 from ultralytics.utils.plotting import Annotator, colors
 
 from .config import Config
+from .verbosity import backend_verbose, detail, diagnostic, status, third_party_stdout
+
+
+LOG = logging.getLogger(__name__)
 
 
 @dataclass
@@ -124,22 +129,28 @@ def predict(
     completed_files: list[str] = []
     _write_progress(p, completed_files, len(supported_files))
 
+    status(LOG, "Prediction: %d media file(s) found.", len(supported_files))
+
     model_path = cfg.predict.model_path
     if cfg.two_stage.strategy == "two_stage":
         detector_weights = {
             "best_27": "best_27.pt",
             "mdv6": "MDV6-yolov10-c.pt",
-            "deepfaune_1.4": "deepfaune_1.4.pt",
+            "deepfaune": "deepfaune-yolov8s_960.pt",
             "best_28": "best_28.pt",
         }[cfg.two_stage.detector]
         model_path = cfg.two_stage.models_dir / detector_weights
     if not model_path.exists():
         raise FileNotFoundError(f"Detector weights not found: {model_path}")
-    model = YOLO(str(model_path))
+    status(LOG, "Loading detector: %s", model_path)
+    diagnostic(LOG, "Detector device=%s, image_size=%s", cfg.predict.device, cfg.predict.imgsz)
+    with third_party_stdout():
+        model = YOLO(str(model_path))
 
-    for file in supported_files:
+    for media_index, file in enumerate(supported_files, start=1):
         if should_cancel and should_cancel():
             break
+        status(LOG, "Predicting [%d/%d]: %s", media_index, len(supported_files), file)
         stem = file.split(".")[0]
         dynamic_project_name = f"{cfg.paths.camera_id}/{cfg.paths.footage_date}/{stem}"
         full_path = str(p.input_dir / file)
@@ -156,6 +167,7 @@ def predict(
                 project=str(p.results_root),
                 name=dynamic_project_name,
                 device=cfg.predict.device,
+                verbose=backend_verbose(),
             )
         elif file.lower().endswith((".mp4", ".avi", ".mov")):
             save_video_frames = (
@@ -174,15 +186,16 @@ def predict(
                 imgsz=cfg.predict.imgsz,
                 conf=cfg.predict.conf,
                 iou=cfg.predict.iou,
-                augment=True,
                 agnostic_nms=True,
                 stream=True,
                 project=str(p.results_root),
                 name=dynamic_project_name,
                 device=cfg.predict.device,
+                verbose=backend_verbose(),
             )
             # consume generator to execute
-            for _ in results:
+            for frame_index, _ in enumerate(results, start=1):
+                detail(LOG, "Predicted frame %d: %s", frame_index, file)
                 if should_cancel and should_cancel():
                     break
 
@@ -192,6 +205,14 @@ def predict(
         completed_files.append(file)
         _write_progress(p, completed_files, len(supported_files))
 
+    if len(completed_files) < len(supported_files):
+        LOG.warning(
+            "Prediction cancelled after %d/%d media file(s).",
+            len(completed_files),
+            len(supported_files),
+        )
+    else:
+        status(LOG, "Prediction complete: %d media file(s).", len(completed_files))
     return completed_files
 
 
@@ -201,7 +222,7 @@ def predict(
 _DETECTOR_CLASSES = {
     "best_27": {"animal": {0}, "passthrough": {1: "Person", 2: "Vehicle"}},
     "mdv6": {"animal": {0}, "passthrough": {1: "Person", 2: "Vehicle"}},
-    "deepfaune_1.4": {"animal": {0}, "passthrough": {1: "Person", 2: "Vehicle"}},
+    "deepfaune": {"animal": {0}, "passthrough": {1: "Person", 2: "Vehicle"}},
     "best_28": {"animal": {0, 3}, "passthrough": {1: "Person", 2: "Vehicle"}},
 }
 
@@ -226,16 +247,20 @@ def _load_classifier(cfg: Config) -> tuple[Callable[[Any], tuple[str, float]], s
     classifier = cfg.two_stage.classifier
     if classifier == "deepfaune_classifier":
         try:
-            from PytorchWildlife.models import classification as pw_classification
+            with third_party_stdout():
+                from PytorchWildlife.models import classification as pw_classification
         except ImportError as exc:
             raise RuntimeError(
                 "DeepFaune classification requires PytorchWildlife to be installed locally."
             ) from exc
 
-        model = pw_classification.DeepfauneClassifier(device=cfg.predict.device)
+        diagnostic(LOG, "DeepFaune classifier device=%s", cfg.predict.device)
+        with third_party_stdout():
+            model = pw_classification.DeepfauneClassifier(device=cfg.predict.device)
 
         def classify(image: Any) -> tuple[str, float]:
-            result = model.single_image_classification(cv2.resize(image, (224, 224)))
+            with third_party_stdout():
+                result = model.single_image_classification(cv2.resize(image, (224, 224)))
             label = str(result["prediction"])
             confidences = result.get("all_confidences", [])
             confidence = next((float(score) for name, score in confidences if name == label), 0.0)
@@ -254,7 +279,9 @@ def _load_classifier(cfg: Config) -> tuple[Callable[[Any], tuple[str, float]], s
             "EfficientNet classification requires TensorFlow to be installed locally."
         ) from exc
     classes = _classification_classes(weights)
-    model = tf.keras.models.load_model(weights)
+    diagnostic(LOG, "Keras classifier=%s, device=%s", weights, cfg.predict.device)
+    with third_party_stdout():
+        model = tf.keras.models.load_model(weights)
 
     def classify(image: Any) -> tuple[str, float]:
         resized = cv2.resize(image, (380, 380))
@@ -329,23 +356,33 @@ def _source_for_label(p: PathsResolved, media_name: str, label_file: Path) -> Pa
 def classify(cfg: Config, completed_files: list[str] | None = None) -> None:
     """Classify saved detector boxes and persist only a private intermediate mapping."""
     if cfg.two_stage.strategy != "two_stage":
+        status(LOG, "Classification skipped: single-stage strategy is active.")
         return
     p = resolve_paths(cfg)
-    classify_crop, _ = _load_classifier(cfg)
+    status(LOG, "Loading classifier: %s", cfg.two_stage.classifier)
+    classify_crop, classifier_backend = _load_classifier(cfg)
     detector_classes = _DETECTOR_CLASSES[cfg.two_stage.detector]
     media_names = (
         completed_files if completed_files is not None else sorted(os.listdir(p.input_dir))
     )
+    status(LOG, "Classification: %d media file(s) to inspect.", len(media_names))
     predictions: dict[str, dict[str, Any]] = {}
-    for media_name in media_names:
+    classified_count = 0
+    passthrough_count = 0
+    missing_source_count = 0
+    for media_index, media_name in enumerate(media_names, start=1):
+        status(LOG, "Classifying [%d/%d]: %s", media_index, len(media_names), media_name)
         stem = Path(media_name).stem
         labels_dir = p.per_file_root / stem / "labels"
         if not labels_dir.exists():
+            detail(LOG, "No detector labels for %s", media_name)
             continue
         for label_file in sorted(labels_dir.glob("*.txt")):
+            detail(LOG, "Reading label file: %s", label_file)
             source = _source_for_label(p, media_name, label_file)
             image = cv2.imread(str(source)) if source else None
             if image is None:
+                missing_source_count += 1
                 continue
             for line_number, line in enumerate(label_file.read_text(encoding="utf-8").splitlines()):
                 parts = line.split()
@@ -358,15 +395,38 @@ def classify(cfg: Config, completed_files: list[str] | None = None) -> None:
                         "label": detector_classes["passthrough"][class_id],
                         "confidence": float(parts[5]),
                     }
+                    passthrough_count += 1
+                    detail(LOG, "Passthrough %s: %s", key, predictions[key]["label"])
                 elif class_id in detector_classes["animal"]:
                     crop = _square_crop(image, [float(value) for value in parts[1:5]])
                     if crop is not None:
                         label, confidence = classify_crop(crop)
                         predictions[key] = {"label": label, "confidence": confidence}
+                        classified_count += 1
+                        detail(
+                            LOG,
+                            "Classified %s with %s: %s (%.3f)",
+                            key,
+                            classifier_backend,
+                            label,
+                            confidence,
+                        )
     p.results_dir.mkdir(parents=True, exist_ok=True)
     temporary_path = p.two_stage_json.with_suffix(".tmp")
     temporary_path.write_text(json.dumps(predictions, ensure_ascii=False), encoding="utf-8")
     temporary_path.replace(p.two_stage_json)
+    if missing_source_count:
+        LOG.warning(
+            "Skipped %d label file(s) because their source image/frame was unavailable.",
+            missing_source_count,
+        )
+    status(
+        LOG,
+        "Classification complete: %d classified, %d passthrough; wrote %s",
+        classified_count,
+        passthrough_count,
+        p.two_stage_json,
+    )
 
 
 # --------------------
@@ -381,9 +441,14 @@ def get_exif(
 
     rows: List[Tuple[str, str, float]] = []
     avi_count = 0
-    for file in sorted(os.listdir(p.input_dir)):
-        if include_files is not None and file not in include_files:
-            continue
+    media_names = [
+        file
+        for file in sorted(os.listdir(p.input_dir))
+        if include_files is None or file in include_files
+    ]
+    status(LOG, "EXIF extraction: %d media file(s) to inspect.", len(media_names))
+    for media_index, file in enumerate(media_names, start=1):
+        status(LOG, "Extracting metadata [%d/%d]: %s", media_index, len(media_names), file)
         full = p.input_dir / file
         try:
             if file.lower().endswith((".jpg", ".png")):
@@ -417,13 +482,22 @@ def get_exif(
                 rows.append((file, dt_str, duration))
             elif file.lower().endswith((".avi",)):
                 avi_count += 1
+                detail(LOG, "Skipping unsupported AVI metadata: %s", file)
                 continue
-        except Exception:
+        except Exception as exc:
             # Skip problematic file but continue
+            LOG.warning("Could not extract metadata from %s: %s", file, exc)
             continue
 
     df = pd.DataFrame(rows, columns=["file_name", "date_exif", "duration"])
     df.to_csv(p.exif_csv, index=False)
+    status(
+        LOG,
+        "EXIF extraction complete: %d record(s), %d AVI skipped; wrote %s",
+        len(df),
+        avi_count,
+        p.exif_csv,
+    )
     return df, avi_count
 
 
@@ -484,8 +558,13 @@ def validate(cfg: Config, show: bool = True, save_annotated: bool = False) -> No
     p = resolve_paths(cfg)
     base_dir = p.per_file_root
 
+    media_names = sorted(os.listdir(p.input_dir))
+    annotated_count = 0
+    status(LOG, "Validation: %d media file(s) to inspect.", len(media_names))
+
     # Iterate input files and compose labels path exactly as in predict()
-    for idx, file in enumerate(sorted(os.listdir(p.input_dir))):
+    for idx, file in enumerate(media_names):
+        status(LOG, "Validating [%d/%d]: %s", idx + 1, len(media_names), file)
         stem = file.rsplit(".", 1)[0]
         labels = base_dir / stem / "labels"
         # Skip when there are no label files (dir may exist but be empty)
@@ -504,6 +583,8 @@ def validate(cfg: Config, show: bool = True, save_annotated: bool = False) -> No
                 if not (labels / ann_name).exists():
                     continue
                 vis = _draw_annotation(frame, labels, ann_name)
+                annotated_count += 1
+                detail(LOG, "Rendered annotated frame: %s", frame_name)
                 if save_annotated:
                     out_dir = base_dir / stem / "annotated"
                     out_dir.mkdir(parents=True, exist_ok=True)
@@ -523,6 +604,8 @@ def validate(cfg: Config, show: bool = True, save_annotated: bool = False) -> No
                 if not (labels / ann_name).exists():
                     continue
                 vis = _draw_annotation(img, labels, ann_name)
+                annotated_count += 1
+                detail(LOG, "Rendered annotated image: %s", file)
                 if save_annotated:
                     out_dir = base_dir / stem / "annotated"
                     out_dir.mkdir(parents=True, exist_ok=True)
@@ -533,7 +616,9 @@ def validate(cfg: Config, show: bool = True, save_annotated: bool = False) -> No
                     cv2.destroyAllWindows()
             else:
                 # Video without saved frames cannot be visualized here
+                detail(LOG, "No saved frames available for video: %s", file)
                 continue
+    status(LOG, "Validation complete: %d annotated image(s)/frame(s).", annotated_count)
 
 
 # --------------------
@@ -563,9 +648,10 @@ def _collect_file_summary(
     directories = (
         [Path(file_name).stem for file_name in completed_files]
         if completed_files is not None
-        else os.listdir(per_file_dir)
+        else sorted(stem_to_name)
     )
-    for directory in directories:
+    for media_index, directory in enumerate(directories, start=1):
+        status(LOG, "Aggregating [%d/%d]: %s", media_index, len(directories), directory)
         labels_path = per_file_dir / directory / "labels"
         if not labels_path.exists():
             continue
@@ -574,6 +660,7 @@ def _collect_file_summary(
         group_sizes: list[int] = []
         geometry_entries: list[dict[str, Any]] = []
         for label_file in os.listdir(labels_path):
+            detail(LOG, "Reading detections: %s", labels_path / label_file)
             with open(labels_path / label_file) as f:
                 group_size = 0
                 for line_number, line in enumerate(f.readlines()):
@@ -720,6 +807,7 @@ def aggregate(
 ) -> AggregateResult:
     p = resolve_paths(cfg)
     p.results_dir.mkdir(parents=True, exist_ok=True)
+    status(LOG, "Aggregation started.")
 
     stem_to_name = {
         Path(file_name).stem: file_name
@@ -851,6 +939,9 @@ def aggregate(
         ],
     )
     seq_df.to_csv(p.final_csv, index=False)
+    status(LOG, "Aggregation complete: %d sequence row(s); wrote %s", len(seq_df), p.final_csv)
+    if save_per_image:
+        status(LOG, "Per-media summary: %d row(s); wrote %s", len(file_df), p.per_image_csv)
     return AggregateResult(
         sequences=seq_df,
         per_image=file_df,

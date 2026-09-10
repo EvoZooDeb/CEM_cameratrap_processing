@@ -15,6 +15,14 @@ class FelisApp(App):
             deferred_help=True,
         )
 
+    def configure_logging(self) -> None:
+        """Configure standard Cliff logging and propagate its verbosity level."""
+        super().configure_logging()
+
+        from .verbosity import configure
+
+        configure(self.options.verbose_level)
+
     def initialize_app(self, argv):  # noqa: D401
         # Commands are registered programmatically below
         # since we aren't packaging entry_points here.

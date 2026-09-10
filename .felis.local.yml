@@ -1,0 +1,42 @@
+input_root: /home/gabor/Documents/motolla/hoi/kameracsapda/CEM_cameratrap_processing/raw
+output_root: /home/gabor/Documents/motolla/hoi/kameracsapda/CEM_cameratrap_processing/results 
+username: gabor
+camera_id: bzs4b
+footage_date: 20180307
+model_path: rk/best_26.pt
+# Two-stage prediction is the default. All selected model files live in models_dir.
+
+
+strategy: two_stage
+
+#detector: best_27
+#classifier: deepfaune_classifier
+
+#detector: mdv6
+#classifier: deepfaune_classifier
+
+detector: deepfaune
+classifier: deepfaune_classifier
+
+#detector: best_27
+#classifier: 4_camtrap
+
+#detector: mdv6
+#classifier: 4_camtrap
+
+#detector: deepfaune
+#classifier: 4_camtrap
+
+#detector: best_28
+#classifier: 2_artiodactyla
+
+#detector: best_28
+#classifier: 2_carnivora
+
+models_dir: /home/gabor/Documents/motolla/hoi/kameracsapda/CEM_cameratrap_processing/models
+# Optional predict params
+device: cpu
+imgsz: 1280
+conf: 0.25
+iou: 0.45
+save_frames: True

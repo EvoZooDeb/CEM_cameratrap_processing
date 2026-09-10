@@ -18,7 +18,7 @@ class Classify(Command):
         parser.add_argument("--camera-id")
         parser.add_argument("--footage-date")
         parser.add_argument("--model-path")
-        parser.add_argument("--detector", choices=["best_27", "mdv6", "deepfaune_1.4", "best_28"])
+        parser.add_argument("--detector", choices=["best_27", "mdv6", "deepfaune", "best_28"])
         parser.add_argument(
             "--classifier",
             choices=["deepfaune_classifier", "4_camtrap", "2_artiodactyla", "2_carnivora"],

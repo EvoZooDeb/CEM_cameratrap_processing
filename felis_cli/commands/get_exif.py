@@ -50,5 +50,4 @@ class GetExif(Command):
             "model_path": parsed_args.model_path,
         }
         cfg = load_config(parsed_args.config, overrides)
-        df, avi_count = get_exif(cfg)
-        self.app.stdout.write(f"Extracted {len(df)} records. AVI skipped: {avi_count}\n")
+        get_exif(cfg)

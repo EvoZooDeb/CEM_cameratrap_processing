@@ -12,8 +12,13 @@ sudo chown $(whoami) /opt/camtrap
 python3 -m venv /opt/camtrap/.venv
 /opt/camtrap/.venv/bin/pip install --upgrade pip
 # From repo root
-/opt/camtrap/.venv/bin/pip install .
+/opt/camtrap/.venv/bin/pip install '.[two-stage]'
+/opt/camtrap/.venv/bin/pip check
 ```
+
+The package pins the tested runtime versions, including the TensorFlow/Keras pair and
+the setuptools version required by PytorchWildlife's yolov5 dependency. Upgrade these
+pins together only after testing every supported detector/classifier pair.
 
 2) System packages:
 
@@ -161,4 +166,3 @@ docker run --rm \
 ```
 
 Replace `USER` and paths to match your environment.
-

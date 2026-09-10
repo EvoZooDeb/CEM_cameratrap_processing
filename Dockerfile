@@ -35,6 +35,9 @@ COPY felis.py ./
 COPY felis_cli ./felis_cli
 RUN pip install '.[two-stage]'
 
+# Fail the image build if the two classifier runtimes cannot be imported.
+RUN python -c "import keras, tensorflow; from PytorchWildlife.models import classification"
+
 # Non-root user for runtime
 RUN useradd -m appuser && chown -R appuser:appuser /app
 

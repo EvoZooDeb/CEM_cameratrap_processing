@@ -1,4 +1,5 @@
 from argparse import ArgumentParser
+import logging
 import os
 from pathlib import Path
 import signal
@@ -7,6 +8,10 @@ from cliff.command import Command
 
 from ..config import load_config
 from ..core import aggregate, classify, get_exif, predict, validate
+from ..verbosity import status
+
+
+LOG = logging.getLogger(__name__)
 
 
 class RunPipeline(Command):
@@ -35,7 +40,7 @@ class RunPipeline(Command):
         )
         parser.add_argument("--model-path", help="Path to the YOLO model weights file.")
         parser.add_argument("--strategy", choices=["single_stage", "two_stage"])
-        parser.add_argument("--detector", choices=["best_27", "mdv6", "deepfaune_1.4", "best_28"])
+        parser.add_argument("--detector", choices=["best_27", "mdv6", "deepfaune", "best_28"])
         parser.add_argument(
             "--classifier",
             choices=["deepfaune_classifier", "4_camtrap", "2_artiodactyla", "2_carnivora"],
@@ -117,33 +122,33 @@ class RunPipeline(Command):
         def request_cancellation(_signum, _frame):
             nonlocal cancellation_requested
             cancellation_requested = True
-            self.app.stdout.write("Cancellation requested; finalizing completed media only...\n")
+            LOG.warning("Cancellation requested; finalizing completed media only...")
 
         previous_sigterm_handler = signal.signal(signal.SIGTERM, request_cancellation)
         try:
             steps = 4 if cfg.two_stage.strategy == "two_stage" else 3
-            self.app.stdout.write(f"[1/{steps}] Predicting...\n")
+            status(LOG, "[1/%d] Predicting...", steps)
             completed_files = predict(cfg, should_cancel=cancellation_is_requested)
 
             if cancellation_is_requested():
-                self.app.stdout.write("[cancelled] Writing partial EXIF and results...\n")
+                LOG.warning("[cancelled] Writing partial EXIF and results...")
                 get_exif(cfg, include_files=set(completed_files))
                 classify(cfg, completed_files=completed_files)
                 aggregate(cfg, save_per_image=True, completed_files=completed_files)
                 return
 
-            self.app.stdout.write(f"[2/{steps}] Extracting EXIF...\n")
+            status(LOG, "[2/%d] Extracting EXIF...", steps)
             get_exif(cfg)
 
             if cfg.two_stage.strategy == "two_stage":
-                self.app.stdout.write("[3/4] Classifying detected animals...\n")
+                status(LOG, "[3/4] Classifying detected animals...")
                 classify(cfg)
 
-            self.app.stdout.write(f"[{steps}/{steps}] Aggregating...\n")
+            status(LOG, "[%d/%d] Aggregating...", steps, steps)
             aggregate(cfg, save_per_image=parsed_args.save_per_image)
         finally:
             signal.signal(signal.SIGTERM, previous_sigterm_handler)
 
         if parsed_args.validate:
-            self.app.stdout.write("[+] Validating (visual) ...\n")
+            status(LOG, "[+] Validating (visual)...")
             validate(cfg, show=not parsed_args.no_show, save_annotated=parsed_args.save_annotated)

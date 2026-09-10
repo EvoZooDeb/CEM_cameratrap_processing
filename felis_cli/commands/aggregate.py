@@ -54,11 +54,4 @@ class Aggregate(Command):
             "model_path": parsed_args.model_path,
         }
         cfg = load_config(parsed_args.config, overrides)
-        result = aggregate(cfg, save_per_image=parsed_args.save_per_image)
-        self.app.stdout.write(
-            f"Wrote {len(result.sequences)} sequence rows to {result.sequence_csv}.\n"
-        )
-        if parsed_args.save_per_image:
-            self.app.stdout.write(
-                f"Wrote {len(result.per_image)} per-image rows to {result.per_image_csv}.\n"
-            )
+        aggregate(cfg, save_per_image=parsed_args.save_per_image)
