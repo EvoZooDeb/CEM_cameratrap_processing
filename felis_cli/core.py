@@ -246,15 +246,34 @@ def _load_classifier(cfg: Config) -> tuple[Callable[[Any], tuple[str, float]], s
     """Load the selected classifier lazily so single-stage installs stay lightweight."""
     classifier = cfg.two_stage.classifier
     if classifier == "deepfaune_classifier":
+        checkpoint_name = "deepfaune-vit_large_patch14_dinov2.lvd142m.v3.pt"
+        checkpoint_path = cfg.two_stage.models_dir / "checkpoints" / checkpoint_name
+        if not checkpoint_path.is_file():
+            raise FileNotFoundError(
+                "DeepFaune classifier weights not found: "
+                f"{checkpoint_path}. Download the checkpoint into "
+                "models_dir/checkpoints before running classification."
+            )
+
         try:
             with third_party_stdout():
+                import torch
                 from PytorchWildlife.models import classification as pw_classification
         except ImportError as exc:
             raise RuntimeError(
                 "DeepFaune classification requires PytorchWildlife to be installed locally."
             ) from exc
 
-        diagnostic(LOG, "DeepFaune classifier device=%s", cfg.predict.device)
+        # PytorchWildlife 1.3.0 ignores its explicit weights argument when its
+        # built-in URL is set. Point its Torch Hub lookup at the mounted model
+        # directory so it finds the existing checkpoint and never downloads it.
+        torch.hub.set_dir(str(cfg.two_stage.models_dir))
+        diagnostic(
+            LOG,
+            "DeepFaune classifier device=%s checkpoint=%s",
+            cfg.predict.device,
+            checkpoint_path,
+        )
         with third_party_stdout():
             model = pw_classification.DeepfauneClassifier(device=cfg.predict.device)
 

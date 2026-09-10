@@ -5,7 +5,8 @@ from __future__ import annotations
 import io
 import logging
 import os
-from contextlib import contextmanager, redirect_stdout
+import sys
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from typing import Iterator
 
 
@@ -66,9 +67,34 @@ def diagnostic(logger: logging.Logger, message: str, *args: object) -> None:
 
 @contextmanager
 def third_party_stdout() -> Iterator[None]:
-    """Hide unsolicited backend stdout except at diagnostic verbosity."""
+    """Hide unsolicited backend output except at diagnostic verbosity."""
     if _verbosity_level >= 3:
         yield
     else:
-        with redirect_stdout(io.StringIO()):
-            yield
+        # TensorFlow/XLA writes early initialization messages directly to file
+        # descriptors 1 and 2, bypassing redirect_stdout/redirect_stderr. Redirect
+        # both levels and restore the original descriptors even when imports fail.
+        saved_descriptors: dict[int, int] = {}
+        with open(os.devnull, "w", encoding="utf-8") as sink:
+            try:
+                for stream in (sys.stdout, sys.stderr):
+                    try:
+                        stream.flush()
+                        descriptor = stream.fileno()
+                    except (AttributeError, io.UnsupportedOperation):
+                        continue
+                    saved_descriptors[descriptor] = os.dup(descriptor)
+                    os.dup2(sink.fileno(), descriptor)
+                with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                    yield
+            finally:
+                for stream in (sys.stdout, sys.stderr):
+                    try:
+                        stream.flush()
+                        descriptor = stream.fileno()
+                    except (AttributeError, io.UnsupportedOperation):
+                        continue
+                    saved = saved_descriptors.get(descriptor)
+                    if saved is not None:
+                        os.dup2(saved, descriptor)
+                        os.close(saved)

@@ -161,8 +161,9 @@ docker run --rm \
   -v /home/USER/FELIS_monitoring/raw_data:/data/raw:ro \
   -v /home/USER/FELIS_monitoring/results:/data/out \
   -v /etc/camtrap/config.yml:/etc/camtrap/config.yml:ro \
-  --gpus all \  # if using NVIDIA GPUs
   your-image felis run --config /etc/camtrap/config.yml --no-show
 ```
 
-Replace `USER` and paths to match your environment.
+Replace `USER` and paths to match your environment. The published image is
+CPU-only; model weights should be mounted read-only at the path configured by
+`models_dir`.

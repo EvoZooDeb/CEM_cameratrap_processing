@@ -23,7 +23,7 @@ class Predict(Command):
         parser.add_argument("--config", help="YAML configuration file. CLI values override it.")
         parser.add_argument("--input-root", help="Base directory containing the raw survey data.")
         parser.add_argument(
-            "--output-root", help="Base directory in which pipeline results are written."
+            "--output-root", help="Base directory in which pipeline results are stored."
         )
         parser.add_argument(
             "--username", help="Survey or project name used in the input and output paths."

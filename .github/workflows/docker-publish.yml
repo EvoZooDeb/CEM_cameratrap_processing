@@ -4,8 +4,30 @@ on:
   push:
     branches: [ main, master ]
     tags: [ 'v*' ]
+    paths:
+      - Dockerfile
+      - docker/**
+      - felis.py
+      - felis_cli/**
+      - pyproject.toml
+      - requirements*.txt
+      - scripts/check_dependency_sync.py
+      - .github/workflows/docker-publish.yml
   pull_request:
     branches: [ main, master ]
+    paths:
+      - Dockerfile
+      - docker/**
+      - felis.py
+      - felis_cli/**
+      - pyproject.toml
+      - requirements*.txt
+      - scripts/check_dependency_sync.py
+      - .github/workflows/docker-publish.yml
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -21,6 +43,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Check dependency manifests
+        run: python3 scripts/check_dependency_sync.py
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -47,9 +72,9 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
+          platforms: linux/amd64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
+          cache-from: type=gha,scope=felis-cpu-amd64
+          cache-to: type=gha,mode=max,scope=felis-cpu-amd64

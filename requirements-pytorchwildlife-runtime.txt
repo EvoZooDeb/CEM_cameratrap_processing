@@ -1,0 +1,3 @@
+# Runtime requirements missing from PytorchWildlife 1.3.0 metadata. Keep these
+# separate so small compatibility fixes do not invalidate the large ML layer.
+dill==0.4.1

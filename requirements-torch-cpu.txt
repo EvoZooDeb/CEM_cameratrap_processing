@@ -1,0 +1,5 @@
+# Install this file from https://download.pytorch.org/whl/cpu before the other
+# requirements. The public version pins also satisfy pyproject metadata.
+torch==2.11.0
+torchvision==0.26.0
+torchaudio==2.11.0

@@ -1,0 +1,11 @@
+PytorchWildlife==1.3.0
+torch==2.11.0
+torchvision==0.26.0
+torchaudio==2.11.0
+tensorflow==2.19.1
+keras==3.9.2
+# PytorchWildlife 1.3.0 imports these but does not declare them.
+librosa==0.11.0
+soundfile==0.14.0
+# PytorchWildlife 1.3.0 imports pkg_resources through yolov5.
+setuptools==80.10.2

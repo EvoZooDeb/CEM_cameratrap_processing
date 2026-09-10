@@ -84,11 +84,30 @@ classifies animal crops to species level. Supported detector/classifier pairs ar
 and `best_28` with `2_artiodactyla` or `2_carnivora`.
 
 All weights must be present locally in `models_dir`: `best_27.pt`,
-`md_v1000.0.0-redwood.pt`,
-`deepfaune-yolov8s_960.pt`, `best_28.pt`, and the applicable `.keras` classifier file.
+`md_v1000.0.0-redwood.pt`, `deepfaune-yolov8s_960.pt`, `best_28.pt`, and the
+applicable `.keras` classifier file.
 Each Keras classifier additionally needs a same-named `.classes.txt` file with
-one output class per line in model-output order. DeepFaune resources must already
-be available to the locally installed PytorchWildlife runtime.
+one output class per line in model-output order. The DeepFaune classifier weight
+must be stored at:
+
+```text
+models/checkpoints/deepfaune-vit_large_patch14_dinov2.lvd142m.v3.pt
+```
+
+Download and verify the PytorchWildlife 1.3 checkpoint once on the host:
+
+```bash
+mkdir -p models/checkpoints
+curl -fL --retry 3 \
+  -o models/checkpoints/deepfaune-vit_large_patch14_dinov2.lvd142m.v3.pt \
+  https://pbil.univ-lyon1.fr/software/download/deepfaune/v1.3/deepfaune-vit_large_patch14_dinov2.lvd142m.v3.pt
+echo "b1d31940067fe7e7e973b093ad787d5463a7c88ad81a8341859667e61a2e4391  models/checkpoints/deepfaune-vit_large_patch14_dinov2.lvd142m.v3.pt" \
+  | sha256sum --check
+```
+
+The Docker `models` volume exposes this file at `/work/models/checkpoints`.
+FELIS refuses to run the DeepFaune classifier when it is absent instead of
+downloading a temporary copy inside the container.
 
 ## Commands
 
@@ -234,9 +253,17 @@ strategy. Two-stage intermediate classifications are deliberately private.
 
 ## Docker
 
-```bash
-docker build -t felis:local .
+The published Docker image targets Linux `amd64` and uses CPU-only PyTorch.
+Model weights are not baked into the image; they remain on the host and are
+mounted read-only at runtime.
 
+```bash
+docker buildx build --platform linux/amd64 --load -t felis:local .
+```
+
+With nextcloud data
+
+```
 docker run --rm \
   -v ./.felis.yml:/etc/felis/config.yml:ro \
   -v nc_data:/work/raw:ro \
@@ -244,6 +271,26 @@ docker run --rm \
   -v ./models:/work/models:ro \
   felis:local run --config /etc/felis/config.yml --no-show
 ```
+
+with local data
+
+```
+docker run --rm \
+  -v ./.felis.yml:/etc/felis/config.yml:ro \
+  -v ./raw:/work/raw:ro \
+  -v ./results:/work/results \
+  -v ./models:/work/models:ro \
+  felis:local run --config /etc/felis/config.yml --no-show
+```
+
+The first clean build downloads the full machine-learning runtime. Subsequent
+builds reuse that dependency layer as long as `requirements*.txt` is unchanged,
+so changes limited to `felis.py` or `felis_cli/` do not reinstall PyTorch,
+TensorFlow, or PytorchWildlife.
+
+PytorchWildlife 1.3.0 omits some imports and checkpoint-deserialization
+requirements from its package metadata. They are pinned explicitly by this
+project, including `librosa`, `soundfile`, and `dill`.
 
 The container remaps its internal `appuser` to match the owner of `/work`
 mounts. Override this with `-e FELIS_UID=<uid> -e FELIS_GID=<gid>` when needed.
