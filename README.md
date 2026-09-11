@@ -158,7 +158,12 @@ JSON formats are unchanged.
 
 ```bash
 felis classify --config .felis.yml
+felis classify --config .felis.yml --device cpu
 ```
+
+The command honors the YAML `device` value and accepts `--device` as a CLI
+override. When CPU is selected, CUDA devices are hidden before the classifier
+backend is loaded.
 
 ### `felis exif`
 

@@ -8,8 +8,10 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from felis_cli import core
 from felis_cli.config import Config, Paths, PredictParams, TwoStageParams
+from felis_cli.operations import classify as classify_operation
+from felis_cli.operations import predict as predict_operation
+from felis_cli.operations.paths import resolve_paths
 from felis_cli.verbosity import backend_verbose, configure, diagnostic, third_party_stdout
 
 
@@ -81,31 +83,61 @@ class CoreProgressTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temporary_directory:
             cfg = self._config(Path(temporary_directory))
-            (core.resolve_paths(cfg).input_dir / "sample.jpg").touch()
-            (core.resolve_paths(cfg).input_dir / "sample.mp4").touch()
-            with patch.object(core, "YOLO", FakeModel):
+            (resolve_paths(cfg).input_dir / "sample.jpg").touch()
+            (resolve_paths(cfg).input_dir / "sample.mp4").touch()
+            with patch.object(predict_operation, "YOLO", FakeModel):
                 configure(1)
-                core.predict(cfg)
+                predict_operation.predict(cfg)
                 configure(2)
-                core.predict(cfg)
+                predict_operation.predict(cfg)
 
         self.assertTrue(all(not call["verbose"] for call in FakeModel.calls[:2]))
         self.assertTrue(all(call["verbose"] for call in FakeModel.calls[2:]))
         self.assertTrue(all("augment" not in call for call in FakeModel.calls))
 
+    def test_predict_saves_video_frames_for_two_stage_classification(self) -> None:
+        class FakeResult:
+            orig_img = object()
+
+        class FakeModel:
+            def __init__(self, _path: str) -> None:
+                pass
+
+            def predict(self, source: str, **_kwargs: object) -> list[FakeResult]:
+                return [FakeResult()] if source.endswith(".mp4") else []
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            cfg = self._config(Path(temporary_directory), strategy="two_stage")
+            cfg.two_stage.detector = "best_27"
+            (cfg.two_stage.models_dir / "best_27.pt").touch()
+            (resolve_paths(cfg).input_dir / "sample.mp4").touch()
+            with (
+                patch.object(predict_operation, "YOLO", FakeModel),
+                patch.object(
+                    predict_operation.cv2,
+                    "imwrite",
+                    return_value=True,
+                    create=True,
+                ) as imwrite,
+            ):
+                predict_operation.predict(cfg)
+
+        frame_path = resolve_paths(cfg).per_file_root / "sample" / "sample_frames/sample_1.jpg"
+        imwrite.assert_called_once_with(str(frame_path), FakeResult.orig_img)
+
     def test_classify_reports_media_progress_and_summary(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             cfg = self._config(Path(temporary_directory), strategy="two_stage")
-            (core.resolve_paths(cfg).input_dir / "sample.jpg").touch()
+            (resolve_paths(cfg).input_dir / "sample.jpg").touch()
             with (
                 patch.object(
-                    core,
+                    classify_operation,
                     "_load_classifier",
                     return_value=(lambda image: ("x", 1.0), "fake"),
                 ),
-                self.assertLogs("felis_cli.core", level="INFO") as messages,
+                self.assertLogs("felis_cli.operations.classify", level="INFO") as messages,
             ):
-                core.classify(cfg)
+                classify_operation.classify(cfg)
 
         output = "\n".join(messages.output)
         self.assertIn("Classifying [1/1]: sample.jpg", output)

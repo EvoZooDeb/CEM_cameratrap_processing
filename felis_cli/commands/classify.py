@@ -3,7 +3,7 @@ from argparse import ArgumentParser
 from cliff.command import Command
 
 from ..config import load_config
-from ..core import classify
+from ..operations.classify import classify
 
 
 class Classify(Command):
@@ -18,6 +18,9 @@ class Classify(Command):
         parser.add_argument("--camera-id")
         parser.add_argument("--footage-date")
         parser.add_argument("--model-path")
+        parser.add_argument(
+            "--device", help="Inference device, for example 'cuda:0' or 'cpu'."
+        )
         parser.add_argument("--detector", choices=["best_27", "mdv6", "deepfaune", "best_28"])
         parser.add_argument(
             "--classifier",
