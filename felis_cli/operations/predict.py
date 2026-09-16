@@ -84,6 +84,7 @@ def predict(
                 agnostic_nms=True,
                 project=str(p.results_root),
                 name=dynamic_project_name,
+                exist_ok=True,
                 device=cfg.predict.device,
                 verbose=backend_verbose(),
             )
@@ -109,6 +110,7 @@ def predict(
                 stream=True,
                 project=str(p.results_root),
                 name=dynamic_project_name,
+                exist_ok=True,
                 device=cfg.predict.device,
                 verbose=backend_verbose(),
             )

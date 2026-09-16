@@ -39,6 +39,7 @@ username: bela
 camera_id: FELIS-8
 footage_date: "20250518"
 model_path: /home/USER/wolf_camtrap/scripts/runs/detect/train21/weights/best.pt
+strategy: single_stage
 # Optional predict params
 device: cpu  # or cuda:0 if GPU
 imgsz: 1280
@@ -47,6 +48,10 @@ iou: 0.45
 save_frames: false
 YAML
 ```
+
+The example uses `single_stage`, so `model_path` is the detector that FELIS
+loads. For the default `two_stage` strategy, also set `detector`, `classifier`,
+and `models_dir`; see the model matrix and required filenames in `README.md`.
 
 ## Paths
 
@@ -152,18 +157,160 @@ Use the PHP CLI or call the wrapper directly. Always use absolute paths.
 - Timeouts: wrap call with `timeout 6h /usr/local/bin/camtrap-run` if desired.
 - Health checks: verify final CSV exists/has size; alert otherwise.
 
-## Docker (optional)
+## Docker Deployment
 
-Containerize the CLI for isolation and portability; call from PHP/cron:
+The project publishes a Linux `amd64`, CPU-only image to GitHub Container
+Registry. Model weights and camera-trap data are not included in the image.
+Docker Engine is sufficient; no Python installation is needed on the host.
+Building locally also requires the Docker Buildx plugin.
 
+### Get the image
+
+Pull the image built from the default branch:
+
+```bash
+docker pull ghcr.io/evozoodeb/cem_cameratrap_processing:latest
 ```
-docker run --rm \
-  -v /home/USER/FELIS_monitoring/raw_data:/data/raw:ro \
-  -v /home/USER/FELIS_monitoring/results:/data/out \
-  -v /etc/camtrap/config.yml:/etc/camtrap/config.yml:ro \
-  your-image felis run --config /etc/camtrap/config.yml --no-show
+
+If the package is private, authenticate first with a GitHub token that has
+`read:packages` permission:
+
+```bash
+echo "$GHCR_TOKEN" | docker login ghcr.io -u GITHUB_USER --password-stdin
 ```
 
-Replace `USER` and paths to match your environment. The published image is
-CPU-only; model weights should be mounted read-only at the path configured by
-`models_dir`.
+Alternatively, build the current checkout locally:
+
+```bash
+docker buildx build --platform linux/amd64 --load -t felis:local .
+```
+
+Use `felis:local` instead of the GHCR image name in the commands below when
+running a local build.
+
+### Container configuration
+
+Paths in the YAML file must be the paths visible **inside the container**, not
+host paths. Save this as `/etc/camtrap/config.yml` (or another host path):
+
+```yaml
+input_root: /work/raw
+output_root: /work/results
+username: bela
+camera_id: FELIS-8
+footage_date: "20250518"
+model_path: /work/models/best.pt
+strategy: single_stage
+models_dir: /work/models
+device: cpu
+imgsz: 1280
+conf: 0.25
+iou: 0.45
+save_frames: false
+```
+
+For `two_stage`, change `strategy` and configure a supported pair, for example:
+
+```yaml
+strategy: two_stage
+detector: best_27
+classifier: deepfaune_classifier
+models_dir: /work/models
+```
+
+Place every required weight and `.classes.txt` file under the mounted host
+models directory. The DeepFaune classifier checkpoint has the special path
+`models/checkpoints/deepfaune-vit_large_patch14_dinov2.lvd142m.v3.pt`; download
+and checksum it as documented in `README.md`.
+
+### Run with host directories
+
+Create the writable output directory before starting the container:
+
+```bash
+mkdir -p /home/USER/FELIS_monitoring/results
+
+docker run --rm --init --stop-timeout 120 \
+  -v /etc/camtrap/config.yml:/etc/felis/config.yml:ro \
+  -v /home/USER/FELIS_monitoring/raw_data:/work/raw:ro \
+  -v /home/USER/FELIS_monitoring/results:/work/results \
+  -v /home/USER/FELIS_monitoring/models:/work/models:ro \
+  ghcr.io/evozoodeb/cem_cameratrap_processing:latest \
+  run --config /etc/felis/config.yml --no-show
+```
+
+The entrypoint accepts the shorthand `run`; spelling out `felis run` also works.
+It normally changes the container user to match the owner of `/work/results`,
+so generated files retain useful host ownership. Override detection when needed
+with `-e FELIS_UID=$(id -u) -e FELIS_GID=$(id -g)`. If the raw-data mount is
+readable only by root, add `-e FELIS_FORCE_ROOT=1`; after the run, the entrypoint
+restores ownership below `/work/results`.
+
+For a Docker-managed Nextcloud data volume, replace the raw-data mount with:
+
+```bash
+-v nc_data:/work/raw:ro
+```
+
+The configured `input_root` remains `/work/raw`. Its content must still follow
+FELIS's expected layout:
+`<input_root>/<username>/files/cameratrap/<camera_id>/<footage_date>/`.
+
+### Run from cron
+
+Create `/usr/local/bin/camtrap-docker-run`:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly IMAGE=ghcr.io/evozoodeb/cem_cameratrap_processing:latest
+readonly CONFIG=/etc/camtrap/config.yml
+readonly RAW=/home/USER/FELIS_monitoring/raw_data
+readonly RESULTS=/home/USER/FELIS_monitoring/results
+readonly MODELS=/home/USER/FELIS_monitoring/models
+readonly LOG_DIR=/var/log/camtrap
+readonly LOCK=/var/lock/camtrap-docker.lock
+
+mkdir -p "$LOG_DIR" "$RESULTS"
+exec {lock_fd}>"$LOCK"
+if ! flock -n "$lock_fd"; then
+  echo "$(date -Is) Another run is in progress" >> "$LOG_DIR/runner.log"
+  exit 0
+fi
+
+docker run --rm --init --stop-timeout 120 \
+  -v "$CONFIG:/etc/felis/config.yml:ro" \
+  -v "$RAW:/work/raw:ro" \
+  -v "$RESULTS:/work/results" \
+  -v "$MODELS:/work/models:ro" \
+  "$IMAGE" run --config /etc/felis/config.yml --no-show \
+  >> "$LOG_DIR/pipeline.log" 2>&1
+```
+
+Install it and schedule it just like the native wrapper:
+
+```bash
+sudo chmod +x /usr/local/bin/camtrap-docker-run
+```
+
+```cron
+0 2 * * * /usr/local/bin/camtrap-docker-run
+```
+
+The cron user must be allowed to access the Docker daemon and all mounted host
+paths. Membership in the `docker` group is effectively root-level access; use a
+root-owned wrapper and root cron entry if that better fits the host's security
+policy. Do not run `docker pull` automatically in the processing job: update the
+image separately, verify it, then let the next scheduled run use it.
+
+### Operations and limitations
+
+- The published image cannot use NVIDIA/CUDA; use the native installation or
+  build and test a separate CUDA image for GPU inference.
+- `SIGTERM` triggers FELIS partial finalization. The generous stop timeout gives
+  the current processing boundary time to finish before Docker sends `SIGKILL`.
+- Use `docker logs` only for a named, non-`--rm` container. The cron example
+  deliberately redirects application output to `/var/log/camtrap/pipeline.log`.
+- The repository currently has no `compose.yml`; the explicit `docker run`
+  command above is the supported deployment definition.

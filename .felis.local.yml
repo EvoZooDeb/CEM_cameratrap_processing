@@ -15,11 +15,11 @@ strategy: two_stage
 #detector: mdv6
 #classifier: deepfaune_classifier
 
-detector: deepfaune
-classifier: deepfaune_classifier
+#detector: deepfaune
+#classifier: deepfaune_classifier
 
-#detector: best_27
-#classifier: 4_camtrap
+detector: best_27
+classifier: 4_camtrap
 
 #detector: mdv6
 #classifier: 4_camtrap
