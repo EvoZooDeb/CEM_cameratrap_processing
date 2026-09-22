@@ -7,13 +7,13 @@ from ..operations.exif import get_exif
 
 
 class GetExif(Command):
-    """Extract capture timestamps and durations into the EXIF CSV."""
+    """Extract capture timestamps and durations into the media metadata CSV."""
 
     def get_parser(self, prog_name):
         parser = ArgumentParser(
             prog=prog_name,
             description=(
-                "Create the camera-date EXIF CSV from the input directory. JPG and PNG "
+                "Create the media metadata CSV from the input directory. JPG and PNG "
                 "timestamps come from EXIF when available, otherwise file modification time; "
                 "MP4 and MOV timestamps and durations come from container metadata, with the "
                 "same modification-time fallback. AVI files are counted and skipped."
@@ -22,7 +22,7 @@ class GetExif(Command):
         parser.add_argument("--config", help="YAML configuration file. CLI values override it.")
         parser.add_argument("--input-root", help="Base directory containing the raw survey data.")
         parser.add_argument(
-            "--output-root", help="Base directory in which the EXIF CSV is written."
+            "--output-root", help="Base directory in which the media metadata CSV is written."
         )
         parser.add_argument(
             "--username", help="Survey or project name used in the input and output paths."

@@ -42,12 +42,15 @@ python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install '.[two-stage]'
-python -m pip check
+python -m pip uninstall -y opencv-python opencv-python-headless
+python -m pip install --no-deps opencv-python==5.0.0.93
+python scripts/check_runtime_dependencies.py --opencv-variant gui
 ```
 
-Az utolsó parancs várt eredménye:
-
-No broken requirements found.
+Az utolsó parancs kimenet nélkül, nullás visszatérési kóddal jelzi, hogy csak a
+GUI-képes OpenCV-változat maradt telepítve. Erre azért van szükség, mert a
+PytorchWildlife egyes függőségei a headless csomagnevet kérik, miközben ugyanazt
+a `cv2` API-t használják.
 
 Importellenőrzés:
 

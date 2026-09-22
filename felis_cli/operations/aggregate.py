@@ -7,9 +7,10 @@ import logging
 import math
 import os
 import re
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Tuple
+from typing import Any
 
 import cv2
 import pandas as pd
@@ -23,129 +24,51 @@ from .paths import resolve_paths
 LOG = logging.getLogger(__name__)
 
 
+MEDIA_COLUMNS = [
+    "file_name",
+    "label",
+    "detection_count",
+    "annotated_frame_count",
+    "mean_group_size",
+    "max_group_size",
+    "mean_detector_confidence",
+    "max_detector_confidence",
+    "mean_classification_confidence",
+    "max_classification_confidence",
+]
+
+EVENT_COLUMNS = [
+    "camera_id",
+    "analysis_name",
+    "event_id",
+    "event_start",
+    "event_end",
+    "event_duration_seconds",
+    "media_files",
+    "label",
+    "media_count",
+    "detection_count",
+    "annotated_frame_count",
+    "mean_group_size",
+    "max_group_size",
+    "mean_detector_confidence",
+    "max_detector_confidence",
+    "mean_classification_confidence",
+    "max_classification_confidence",
+    "comment",
+]
+
+
 @dataclass
 class AggregateResult:
-    sequences: pd.DataFrame
-    per_image: pd.DataFrame
-    sequence_csv: Path
-    per_image_csv: Path
-    per_image_written: bool
+    events: pd.DataFrame
+    media: pd.DataFrame
+    event_csv: Path
+    media_csv: Path
 
 
-def _convert_to_datetime(string: str) -> dt.datetime:
-    # expects format like YYYY:MM:DD HH:MM:SS
-    return dt.datetime(
-        int(string[:4]),
-        int(string[5:7]),
-        int(string[8:10]),
-        int(string[11:13]),
-        int(string[14:16]),
-        int(string[17:19]),
-    )
-
-
-def _collect_file_summary(
-    per_file_dir: Path,
-    stem_to_name: dict[str, str],
-    input_dir: Path,
-    detections_dir: Path,
-    classified_labels: dict[str, dict[str, Any]] | None = None,
-    completed_files: list[str] | None = None,
-) -> pd.DataFrame:
-    rows: list[tuple[str, str, float, int, int, float, int]] = []
-    directories = (
-        [Path(file_name).stem for file_name in completed_files]
-        if completed_files is not None
-        else sorted(stem_to_name)
-    )
-    for media_index, directory in enumerate(directories, start=1):
-        status(LOG, "Aggregating [%d/%d]: %s", media_index, len(directories), directory)
-        labels_path = per_file_dir / directory / "labels"
-        if not labels_path.exists():
-            continue
-        resolved_name = stem_to_name.get(directory, directory)
-        frame_labels: list[str] = []
-        group_sizes: list[int] = []
-        geometry_entries: list[dict[str, Any]] = []
-        for label_file in os.listdir(labels_path):
-            detail(LOG, "Reading detections: %s", labels_path / label_file)
-            with open(labels_path / label_file) as f:
-                group_size = 0
-                for line_number, line in enumerate(f.readlines()):
-                    parts = line.rstrip().split(" ")
-                    if len(parts) < 6:
-                        continue
-                    cidx, x_center, y_center, width, height, conf = parts
-                    confidence = float(conf)
-                    if confidence > 0.25:
-                        class_idx = int(cidx)
-                        prediction_key = f"{directory}/labels/{label_file}:{line_number}"
-                        classified = (classified_labels or {}).get(prediction_key)
-                        label_name = (
-                            str(classified["label"])
-                            if classified is not None
-                            else NAMES.get(class_idx, str(class_idx))
-                        )
-                        frame_labels.append(label_name)
-                        group_size += 1
-                        geometry_entries.append(
-                            {
-                                "frame": label_file.rsplit(".", 1)[0],
-                                "class_id": class_idx,
-                                "label": label_name,
-                                "confidence": confidence,
-                                "bbox": [
-                                    float(x_center),
-                                    float(y_center),
-                                    float(width),
-                                    float(height),
-                                ],
-                            }
-                        )
-                if group_size:
-                    group_sizes.append(group_size)
-        _write_detection_file(
-            detections_dir=detections_dir,
-            input_dir=input_dir,
-            file_name=resolved_name,
-            geometries=geometry_entries,
-        )
-        if frame_labels:
-            s = pd.Series(frame_labels)
-            top_label = s.value_counts().index.tolist()[0]
-            top_count = int((s == top_label).sum())
-            n_objects = int(s.count())
-            n_frames = int(len(group_sizes))
-            confidence = top_count / max(n_objects, 1)
-            mean_group = float(sum(group_sizes) / max(len(group_sizes), 1)) if group_sizes else 0.0
-            max_group = int(max(group_sizes)) if group_sizes else 0
-            rows.append(
-                (
-                    resolved_name,
-                    top_label,
-                    confidence,
-                    n_objects,
-                    n_frames,
-                    mean_group,
-                    max_group,
-                )
-            )
-        else:
-            rows.append((resolved_name, "EMPTY", 0.0, 0, 0, 0.0, 0))
-
-    df = pd.DataFrame(
-        rows,
-        columns=[
-            "file_name",
-            "label",
-            "label_confidence",
-            "n_annotated_objects",
-            "n_annotated_frames",
-            "mean_group_size",
-            "max_group_size",
-        ],
-    )
-    return df
+def _convert_to_datetime(value: str) -> dt.datetime:
+    return dt.datetime.strptime(value, "%Y:%m:%d %H:%M:%S")
 
 
 def _detection_file_path(detections_dir: Path, file_name: str) -> Path:
@@ -172,34 +95,34 @@ def _write_detection_file(
     detections_dir: Path,
     input_dir: Path,
     file_name: str,
-    geometries: list[dict[str, Any]],
+    detections: list[dict[str, Any]],
 ) -> None:
-    """Write detailed detections separately from the compact per-media CSV."""
+    """Write final, per-object detections separately from compact CSV summaries."""
     path = _detection_file_path(detections_dir, file_name)
-    if not geometries:
+    if not detections:
         path.unlink(missing_ok=True)
         return
 
     detections_dir.mkdir(parents=True, exist_ok=True)
     is_video = Path(file_name).suffix.lower() in {".mp4", ".avi", ".mov"}
     document: dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "media_name": file_name,
         "media_type": "video" if is_video else "image",
-        "detections": geometries,
+        "detections": detections,
     }
 
     if is_video:
         fps = _video_fps(input_dir / file_name)
         if fps is not None:
             document["frame_rate"] = fps
-        for geometry in geometries:
-            index = _frame_index(str(geometry.get("frame", "")))
+        for detection in detections:
+            index = _frame_index(str(detection.get("frame", "")))
             if index is None:
                 continue
-            geometry["frame_index"] = index
+            detection["frame_index"] = index
             if fps is not None:
-                geometry["timestamp_seconds"] = (index - 1) / fps
+                detection["timestamp_seconds"] = (index - 1) / fps
 
     temporary_path = path.with_suffix(".tmp")
     temporary_path.write_text(
@@ -208,192 +131,266 @@ def _write_detection_file(
     temporary_path.replace(path)
 
 
-def aggregate(
+def _collect_detections(
+    per_file_dir: Path,
+    media_names: list[str],
+    input_dir: Path,
+    detections_dir: Path,
+    classified_labels: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    detections_by_file: dict[str, list[dict[str, Any]]] = {}
+    for media_index, file_name in enumerate(media_names, start=1):
+        status(LOG, "Aggregating [%d/%d]: %s", media_index, len(media_names), file_name)
+        stem = Path(file_name).stem
+        labels_path = per_file_dir / stem / "labels"
+        detections: list[dict[str, Any]] = []
+        if labels_path.exists():
+            for label_file in sorted(labels_path.glob("*.txt")):
+                detail(LOG, "Reading detections: %s", label_file)
+                lines = label_file.read_text(encoding="utf-8").splitlines()
+                for line_number, line in enumerate(lines):
+                    parts = line.split()
+                    if len(parts) < 6:
+                        continue
+                    class_id = int(float(parts[0]))
+                    detector_confidence = float(parts[5])
+                    if detector_confidence <= 0.25:
+                        continue
+                    prediction_key = f"{stem}/labels/{label_file.name}:{line_number}"
+                    classified = (classified_labels or {}).get(prediction_key)
+                    label = (
+                        str(classified["label"])
+                        if classified is not None
+                        else NAMES.get(class_id, str(class_id))
+                    )
+                    detections.append(
+                        {
+                            "frame": label_file.stem,
+                            "detector_class_id": class_id,
+                            "label": label,
+                            "detector_confidence": detector_confidence,
+                            "classification_confidence": (
+                                float(classified["confidence"])
+                                if classified is not None
+                                and classified.get("source") == "classifier"
+                                and classified.get("confidence") is not None
+                                else None
+                            ),
+                            "bbox": [float(value) for value in parts[1:5]],
+                        }
+                    )
+        _write_detection_file(detections_dir, input_dir, file_name, detections)
+        detections_by_file[file_name] = detections
+    return detections_by_file
+
+
+def _mean(values: list[float]) -> float | None:
+    return float(sum(values) / len(values)) if values else None
+
+
+def _maximum(values: list[float]) -> float | None:
+    return float(max(values)) if values else None
+
+
+def _label_summary(
+    detections: list[dict[str, Any]],
+    *,
+    frame_key,
+) -> dict[str, int | float | None]:
+    frame_counts = Counter(frame_key(detection) for detection in detections)
+    detector_confidences = [float(item["detector_confidence"]) for item in detections]
+    classification_confidences = [
+        float(item["classification_confidence"])
+        for item in detections
+        if item.get("classification_confidence") is not None
+    ]
+    group_sizes = list(frame_counts.values())
+    return {
+        "detection_count": len(detections),
+        "annotated_frame_count": len(frame_counts),
+        "mean_group_size": _mean([float(value) for value in group_sizes]) or 0.0,
+        "max_group_size": max(group_sizes, default=0),
+        "mean_detector_confidence": _mean(detector_confidences),
+        "max_detector_confidence": _maximum(detector_confidences),
+        "mean_classification_confidence": _mean(classification_confidences),
+        "max_classification_confidence": _maximum(classification_confidences),
+    }
+
+
+def _empty_summary() -> dict[str, int | float | None]:
+    return {
+        "detection_count": 0,
+        "annotated_frame_count": 0,
+        "mean_group_size": 0.0,
+        "max_group_size": 0,
+        "mean_detector_confidence": None,
+        "max_detector_confidence": None,
+        "mean_classification_confidence": None,
+        "max_classification_confidence": None,
+    }
+
+
+def _build_media_results(
+    media_names: list[str],
+    detections_by_file: dict[str, list[dict[str, Any]]],
+) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    for file_name in media_names:
+        detections = detections_by_file.get(file_name, [])
+        labels = sorted({str(item["label"]) for item in detections})
+        if not labels:
+            rows.append({"file_name": file_name, "label": "EMPTY", **_empty_summary()})
+            continue
+        for label in labels:
+            label_detections = [item for item in detections if item["label"] == label]
+            rows.append(
+                {
+                    "file_name": file_name,
+                    "label": label,
+                    **_label_summary(label_detections, frame_key=lambda item: item["frame"]),
+                }
+            )
+    return pd.DataFrame(rows, columns=MEDIA_COLUMNS)
+
+
+def _event_ranges(timestamps: list[dt.datetime]) -> list[tuple[int, int]]:
+    ranges: list[tuple[int, int]] = []
+    index = 0
+    while index < len(timestamps):
+        start = index
+        anchor = timestamps[index]
+        end = index
+        while end + 1 < len(timestamps) and (timestamps[end + 1] - anchor).total_seconds() <= 10:
+            end += 1
+        ranges.append((start, end))
+        index = end + 1
+    return ranges
+
+
+def _build_event_results(
     cfg: Config,
-    save_per_image: bool = False,
-    completed_files: list[str] | None = None,
-) -> AggregateResult:
-    p = resolve_paths(cfg)
-    p.results_dir.mkdir(parents=True, exist_ok=True)
+    metadata: pd.DataFrame,
+    detections_by_file: dict[str, list[dict[str, Any]]],
+) -> pd.DataFrame:
+    if metadata.empty:
+        return pd.DataFrame(columns=EVENT_COLUMNS)
+    ordered = metadata.copy()
+    ordered["_timestamp"] = ordered["date_exif"].map(_convert_to_datetime)
+    ordered = ordered.sort_values(["_timestamp", "file_name"]).reset_index(drop=True)
+    ranges = _event_ranges(ordered["_timestamp"].tolist())
+    rows: list[dict[str, Any]] = []
+
+    for event_id, (start, end) in enumerate(ranges, start=1):
+        event_media = ordered.iloc[start : end + 1]
+        media_names = event_media["file_name"].astype(str).tolist()
+        start_time = event_media["_timestamp"].min()
+        end_candidates = [
+            row["_timestamp"]
+            + dt.timedelta(seconds=float(row.get("duration", 0.0) or 0.0))
+            for _, row in event_media.iterrows()
+        ]
+        end_time = max(end_candidates, default=start_time)
+        event_detections = [
+            (file_name, detection)
+            for file_name in media_names
+            for detection in detections_by_file.get(file_name, [])
+        ]
+        labels = sorted({str(detection["label"]) for _, detection in event_detections})
+        labels = labels or ["EMPTY"]
+
+        for label in labels:
+            selected = [
+                {**detection, "_file_name": file_name}
+                for file_name, detection in event_detections
+                if detection["label"] == label
+            ]
+            if label == "EMPTY":
+                summary = _empty_summary()
+                media_count = len(media_names)
+            else:
+                summary = _label_summary(
+                    selected,
+                    frame_key=lambda item: (item["_file_name"], item["frame"]),
+                )
+                media_count = len({str(item["_file_name"]) for item in selected})
+            rows.append(
+                {
+                    "camera_id": cfg.paths.camera_id,
+                    "analysis_name": cfg.paths.footage_date,
+                    "event_id": event_id,
+                    "event_start": start_time.strftime("%Y:%m:%d %H:%M:%S"),
+                    "event_end": end_time.strftime("%Y:%m:%d %H:%M:%S"),
+                    "event_duration_seconds": (end_time - start_time).total_seconds(),
+                    "media_files": json.dumps(
+                        media_names, ensure_ascii=False, separators=(",", ":")
+                    ),
+                    "label": label,
+                    "media_count": media_count,
+                    **summary,
+                    "comment": "",
+                }
+            )
+    return pd.DataFrame(rows, columns=EVENT_COLUMNS)
+
+
+def aggregate(cfg: Config, completed_files: list[str] | None = None) -> AggregateResult:
+    paths = resolve_paths(cfg)
+    paths.results_dir.mkdir(parents=True, exist_ok=True)
     status(LOG, "Aggregation started.")
 
-    stem_to_name = {
-        Path(file_name).stem: file_name
-        for file_name in os.listdir(p.input_dir)
-        if (p.input_dir / file_name).is_file()
-    }
+    media_names = (
+        list(completed_files)
+        if completed_files is not None
+        else sorted(
+            file_name
+            for file_name in os.listdir(paths.input_dir)
+            if (paths.input_dir / file_name).is_file()
+            and Path(file_name).suffix.lower() in {".jpg", ".png", ".mp4", ".avi", ".mov"}
+        )
+    )
     classified_labels: dict[str, dict[str, Any]] | None = None
     if cfg.two_stage.strategy == "two_stage":
-        if not p.two_stage_json.exists():
+        if not paths.two_stage_json.exists():
             raise FileNotFoundError(
                 "Two-stage classifications not found. Run 'felis classify' before aggregation."
             )
-        raw_predictions = json.loads(p.two_stage_json.read_text(encoding="utf-8"))
+        raw_predictions = json.loads(paths.two_stage_json.read_text(encoding="utf-8"))
         if not isinstance(raw_predictions, dict):
-            raise ValueError(f"Invalid two-stage classification data: {p.two_stage_json}")
+            raise ValueError(f"Invalid two-stage classification data: {paths.two_stage_json}")
         classified_labels = raw_predictions
-    file_df = _collect_file_summary(
-        p.per_file_root,
-        stem_to_name,
-        p.input_dir,
-        p.detections_dir,
+
+    detections_by_file = _collect_detections(
+        paths.per_file_root,
+        media_names,
+        paths.input_dir,
+        paths.detections_dir,
         classified_labels,
-        completed_files,
     )
-    file_df = file_df.sort_values("file_name")
-    if save_per_image:
-        file_df.to_csv(p.per_image_csv, index=False)
+    media_df = _build_media_results(media_names, detections_by_file)
+    media_df.to_csv(paths.media_results_csv, index=False)
 
-    # EXIF CSV must exist
-    if not p.exif_csv.exists():
-        raise FileNotFoundError(f"EXIF CSV not found: {p.exif_csv}")
+    if not paths.media_metadata_csv.exists():
+        raise FileNotFoundError(f"Media metadata CSV not found: {paths.media_metadata_csv}")
+    metadata = pd.read_csv(paths.media_metadata_csv)
+    metadata = metadata[metadata["file_name"].isin(media_names)]
+    event_df = _build_event_results(cfg, metadata, detections_by_file)
+    event_df.to_csv(paths.event_results_csv, index=False)
 
-    exif_df = pd.read_csv(p.exif_csv)
-    exif_df["file_name"] = [i.split(".")[0] for i in exif_df["file_name"]]
-    exif_sorted = exif_df.sort_values("date_exif")
-
-    file_df_for_join = file_df.copy()
-    file_df_for_join["file_name"] = file_df_for_join["file_name"].str.replace(
-        r"\.[^.]+$", "", regex=True
+    status(
+        LOG,
+        "Aggregation complete: %d event-label row(s); wrote %s",
+        len(event_df),
+        paths.event_results_csv,
     )
-
-    # Group into sequences by <=10 seconds gaps
-    timestamps = [_convert_to_datetime(x) for x in exif_sorted["date_exif"]]
-    indices: list[Tuple[int, int]] = []
-    i = 0
-    while i < len(timestamps):
-        start = i
-        anchor = timestamps[i]
-        j = i
-        while j + 1 < len(timestamps) and (timestamps[j + 1] - anchor).total_seconds() <= 10:
-            j += 1
-        indices.append((start, j))
-        i = j + 1
-
-    sequence_rows: list[
-        Tuple[str, str, str, float, str, str, float, int, int, float, int, str]
-    ] = []
-    for start, end in indices:
-        seq_df = exif_sorted.iloc[start : end + 1]
-        joined_df = (
-            pd.merge(seq_df, file_df_for_join, how="left", on=["file_name"])
-            .sort_values("file_name")
-        )
-        # Media without a detector label directory are absent from file_df. The
-        # left join represents those values as NaN, but downstream sequence
-        # statistics expect the same explicit EMPTY/zero values as an empty
-        # label directory.
-        joined_df = joined_df.fillna(
-            {
-                "label": "EMPTY",
-                "label_confidence": 0.0,
-                "n_annotated_objects": 0,
-                "n_annotated_frames": 0,
-                "mean_group_size": 0.0,
-                "max_group_size": 0,
-            }
-        )
-
-        if len(joined_df) == 1:
-            joined_date = joined_df["date_exif"].iloc[0]
-            duration = (
-                float(joined_df["duration"].iloc[0])
-                if "duration" in joined_df.columns
-                else 1.0
-            )
-            fname = joined_df["file_name"].iloc[0]
-            label = joined_df["label"].iloc[0]
-            n_objects = (
-                int(joined_df["n_annotated_objects"].iloc[0])
-                if "n_annotated_objects" in joined_df.columns
-                else 0
-            )
-            n_frames = (
-                int(joined_df["n_annotated_frames"].iloc[0])
-                if "n_annotated_frames" in joined_df.columns
-                else 0
-            )
-            confidence = (
-                float(joined_df["label_confidence"].iloc[0])
-                if "label_confidence" in joined_df.columns
-                else 0.0
-            )
-            mean_group = (
-                float(joined_df["mean_group_size"].iloc[0])
-                if "mean_group_size" in joined_df.columns
-                else 0.0
-            )
-            max_group = (
-                int(joined_df["max_group_size"].iloc[0])
-                if "max_group_size" in joined_df.columns
-                else 0
-            )
-        else:
-            start_dt = joined_df["date_exif"].iloc[0]
-            end_suffix = joined_df["date_exif"].iloc[-1][17:19]
-            joined_date = f"{start_dt}-{end_suffix}"
-            duration = float(len(joined_df))
-            fname = f"{joined_df['file_name'].iloc[0]}-{joined_df['file_name'].iloc[-1][4:]}"
-            non_empty = joined_df[joined_df["label"] != "EMPTY"]
-            if len(non_empty) > 0:
-                top_label = non_empty["label"].value_counts().index.tolist()[0]
-                top_count = int((non_empty["label"] == top_label).sum())
-                n_objects = int(non_empty["n_annotated_objects"].astype(int).sum())
-                n_frames = int(len(non_empty))
-                confidence = top_count / max(n_frames, 1)
-                mean_group = float(sum(non_empty["max_group_size"]) / max(n_frames, 1))
-                max_group = int(max(non_empty["max_group_size"]))
-                label = top_label
-            else:
-                label = "EMPTY"
-                n_objects = 0
-                n_frames = 0
-                confidence = 0.0
-                mean_group = 0.0
-                max_group = 0
-
-        sequence_rows.append(
-            (
-                cfg.paths.camera_id,
-                cfg.paths.footage_date,
-                joined_date,
-                duration,
-                fname,
-                label,
-                confidence,
-                n_objects,
-                n_frames,
-                mean_group,
-                max_group,
-                "",
-            )
-        )
-
-    seq_df = pd.DataFrame(
-        sequence_rows,
-        columns=[
-            "camera_id",
-            "upload_date",
-            "sequence_date",
-            "sequence_duration",
-            "sequence_file_names",
-            "label",
-            "label_confidence",
-            "n_annotated_objects",
-            "n_annotated_frames",
-            "mean_group_size",
-            "max_group_size",
-            "comment",
-        ],
+    status(
+        LOG,
+        "Media results: %d media-label row(s); wrote %s",
+        len(media_df),
+        paths.media_results_csv,
     )
-    seq_df.to_csv(p.final_csv, index=False)
-    status(LOG, "Aggregation complete: %d sequence row(s); wrote %s", len(seq_df), p.final_csv)
-    if save_per_image:
-        status(LOG, "Per-media summary: %d row(s); wrote %s", len(file_df), p.per_image_csv)
     return AggregateResult(
-        sequences=seq_df,
-        per_image=file_df,
-        sequence_csv=p.final_csv,
-        per_image_csv=p.per_image_csv,
-        per_image_written=save_per_image,
+        events=event_df,
+        media=media_df,
+        event_csv=paths.event_results_csv,
+        media_csv=paths.media_results_csv,
     )

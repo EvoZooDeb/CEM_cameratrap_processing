@@ -17,9 +17,17 @@ For two-stage classifiers, install the local runtime dependencies too:
 
 ```bash
 pip install -e '.[two-stage]'
+pip uninstall -y opencv-python opencv-python-headless
+pip install --no-deps opencv-python==5.0.0.93
+python scripts/check_runtime_dependencies.py --opencv-variant gui
 ```
 
-This installs the `felis` command.
+The explicit OpenCV selection is required because PytorchWildlife dependencies
+request the headless wheel while FELIS and Ultralytics request the desktop
+wheel. Only the desktop variant is retained for direct CLI use, so
+`felis validate` can open native windows. The Docker build performs the inverse
+selection and retains only `opencv-python-headless`. This installs the `felis`
+command.
 
 ## Configuration and input layout
 
@@ -167,11 +175,11 @@ backend is loaded.
 
 ### `felis exif`
 
-Creates the EXIF CSV for the selected input. JPG and PNG timestamps come from
-`EXIF DateTimeOriginal` or `Image DateTime`, with file modification time as a
-fallback; still-image duration is `1.0`. MP4 and MOV creation time and duration
-come from FFmpeg metadata, with the same timestamp fallback. AVI files and
-unreadable files are skipped.
+Creates the media metadata CSV for the selected input. JPG and PNG timestamps
+come from `EXIF DateTimeOriginal` or `Image DateTime`, with file modification
+time as a fallback; still-image duration is `1.0`. MP4 and MOV creation time and
+duration come from FFmpeg metadata, with the same timestamp fallback. AVI files
+and unreadable files are skipped.
 
 ```bash
 felis exif --config .felis.yml
@@ -179,26 +187,25 @@ felis exif --config .felis.yml
 
 ### `felis aggregate`
 
-Requires prediction labels and the EXIF CSV. It summarizes detections per media
-file, groups captures that occur within 10 seconds of the first capture in a
-sequence, and writes a sequence-level CSV. The selected sequence label is the
-most frequent non-empty label; count fields use the built-in `0.25` confidence
-cutoff. It also writes one detection-detail JSON file per media item.
+Requires prediction labels and the media metadata CSV. It summarizes detections
+per media and species, groups captures that occur within 10 seconds of the first
+capture in an event, and writes one result row per event and species. Count
+fields use the built-in `0.25` detector-confidence cutoff. It also writes one
+detection-detail JSON file per non-empty media item.
 
 ```bash
 felis aggregate --config .felis.yml
-felis aggregate --config .felis.yml --save-per-image
 ```
 
-`--save-per-image` additionally writes the per-media summary CSV.
+The per-media result CSV is always written because it is also the media search
+index.
 
 ### `felis validate`
 
-Draws saved YOLO detections above `0.25` confidence on input images or saved
-video frames. By default, each overlay opens in an OpenCV window; press a key
-to continue. Use `--no-show` in headless environments and `--save-annotated`
-to write overlays. Video validation only works when `predict` used
-`--save-frames`.
+Draws final schema-v2 detections on input images or saved video frames. By
+default, each overlay opens in an OpenCV window; press a key to continue. Use
+`--no-show` in headless environments and `--save-annotated` to write overlays.
+Video validation only works when `predict` used `--save-frames`.
 
 ```bash
 felis validate --config .felis.yml --no-show --save-annotated
@@ -215,17 +222,16 @@ Saved overlays go to:
 Runs `predict`, `exif`, `classify`, and `aggregate` in that order for the default
 two-stage strategy; `single_stage` omits `classify`. Add `--validate` to run
 visual validation after aggregation. The command also accepts all prediction
-options plus `--save-per-image`, `--no-show`, and `--save-annotated`.
+options plus `--no-show` and `--save-annotated`.
 
 ```bash
-felis run --config .felis.yml --save-per-image
+felis run --config .felis.yml
 felis run --config .felis.yml --validate --no-show --save-annotated
 ```
 
 On `SIGTERM`, or when the path in `FELIS_CANCEL_FILE` exists, FELIS stops after
-the current processing boundary and writes EXIF and per-media results only for
-media that completed prediction. This partial finalization always writes the
-per-media CSV.
+the current processing boundary and writes metadata, media results, and event
+results only for media that completed prediction.
 
 ## Outputs
 
@@ -238,11 +244,11 @@ All paths below are relative to:
 - `<media_stem>/labels/*.txt`: YOLO prediction labels.
 - `<media_stem>/<media_stem>_frames/`: saved video frames, when enabled.
 - `<media_stem>/annotated/`: validation overlays, when enabled.
-- `results/<username>_<camera_id>_<footage_date>_exif.csv`: timestamps and durations.
-- `results/<username>_<camera_id>_<footage_date>_results.csv`: sequence summary.
-- `results/<username>_<camera_id>_<footage_date>_per_image.csv`: optional per-media summary.
-- `results/detections/<sha256-media-name>.json`: detailed detection geometry,
-  confidence, and video timing data when available.
+- `results/<username>_<camera_id>_<footage_date>_media_metadata.csv`: timestamps and durations.
+- `results/<username>_<camera_id>_<footage_date>_event_results.csv`: one row per event and species.
+- `results/<username>_<camera_id>_<footage_date>_media_results.csv`: one row per media and species.
+- `results/detections/<sha256-media-name>.json`: schema-v2 detection geometry,
+  separate detector/classifier confidence, and video timing data when available.
 - `results/<username>_<camera_id>_<footage_date>_progress.json`: completed
   media names for the current or most recent prediction run.
 
@@ -253,7 +259,7 @@ strategy. Two-stage intermediate classifications are deliberately private.
 
 - `predict` and `run` require valid Ultralytics-compatible YOLO weights. A GPU
   is recommended, but `--device cpu` is supported.
-- `aggregate` must follow a successful `exif` run because the EXIF CSV is required.
+- `aggregate` must follow a successful `exif` run because the media metadata CSV is required.
 - `validate` opens GUI windows unless `--no-show` is supplied.
 
 ## Docker
@@ -270,7 +276,7 @@ With nextcloud data
 
 ```
 docker run --rm \
-  -v ./.felis.yml:/etc/felis/config.yml:ro \
+  -v ./.felis.docker.yml:/etc/felis/config.yml:ro \
   -v nc_data:/work/raw:ro \
   -v ./results:/work/results \
   -v ./models:/work/models:ro \
@@ -281,7 +287,7 @@ with local data
 
 ```
 docker run --rm \
-  -v ./.felis.yml:/etc/felis/config.yml:ro \
+  -v ./.felis.docker.yml:/etc/felis/config.yml:ro \
   -v ./raw:/work/raw:ro \
   -v ./results:/work/results \
   -v ./models:/work/models:ro \

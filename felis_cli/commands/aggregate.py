@@ -7,15 +7,16 @@ from ..operations.aggregate import aggregate
 
 
 class Aggregate(Command):
-    """Build sequence-level summaries from prediction labels and EXIF metadata."""
+    """Build species-aware media and event results from detections and metadata."""
 
     def get_parser(self, prog_name):
         parser = ArgumentParser(
             prog=prog_name,
             description=(
-                "Read YOLO labels and the existing EXIF CSV, summarize each media file, "
-                "and group captures occurring within 10 seconds of a sequence's first capture. "
-                "Writes the sequence CSV and per-media detection-detail JSON files."
+                "Read YOLO labels and the existing media metadata CSV, summarize every "
+                "media/species pair, and group captures occurring within 10 seconds of an "
+                "event's first capture. Writes media and event CSVs plus per-media "
+                "detection-detail JSON files."
             ),
         )
         parser.add_argument("--config", help="YAML configuration file. CLI values override it.")
@@ -37,11 +38,6 @@ class Aggregate(Command):
                 "aggregation does not use it."
             ),
         )
-        parser.add_argument(
-            "--save-per-image",
-            action="store_true",
-            help="Also write the per-media summary CSV alongside the sequence CSV.",
-        )
         return parser
 
     def take_action(self, parsed_args):
@@ -54,4 +50,4 @@ class Aggregate(Command):
             "model_path": parsed_args.model_path,
         }
         cfg = load_config(parsed_args.config, overrides)
-        aggregate(cfg, save_per_image=parsed_args.save_per_image)
+        aggregate(cfg)

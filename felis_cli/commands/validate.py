@@ -13,7 +13,7 @@ class Validate(Command):
         parser = ArgumentParser(
             prog=prog_name,
             description=(
-                "Draw saved YOLO detections above 0.25 confidence on still images or saved "
+                "Draw final schema-v2 detections on still images or saved "
                 "video frames. Images can be displayed one at a time in OpenCV windows and/or "
                 "written as annotated files. Videos can be reviewed only when predict was run "
                 "with --save-frames."

@@ -28,7 +28,7 @@ WORKDIR /app
 
 # Install the expensive CPU-only ML runtime before copying application source.
 # This layer remains cached when only felis.py or felis_cli changes.
-COPY requirements.txt requirements-two-stage.txt requirements-torch-cpu.txt ./
+COPY requirements.txt requirements-two-stage.txt requirements-torch-cpu.txt requirements-docker.txt ./
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --only-binary=:all: \
       --index-url https://download.pytorch.org/whl/cpu \
@@ -51,12 +51,15 @@ COPY pyproject.toml README.md ./
 COPY felis.py ./
 COPY felis_cli ./felis_cli
 COPY scripts/check_dependency_sync.py ./scripts/check_dependency_sync.py
+COPY scripts/check_runtime_dependencies.py ./scripts/check_runtime_dependencies.py
 RUN --mount=type=cache,target=/root/.cache/pip \
     python scripts/check_dependency_sync.py && \
     pip install --no-deps . && \
-    pip check && \
+    pip uninstall -y opencv-python opencv-python-headless && \
+    pip install --no-deps -r requirements-docker.txt && \
+    python scripts/check_runtime_dependencies.py --opencv-variant headless && \
     python -c \
-      "from importlib.metadata import distributions; packages = sorted({dist.metadata['Name'] for dist in distributions() if dist.metadata['Name'] and dist.metadata['Name'].lower().startswith('nvidia-') and dist.metadata['Name'].lower() != 'nvidia-ml-py'}); assert not packages, f'Unexpected NVIDIA CUDA packages: {packages}'"
+      "import keras, tensorflow; import torch, torchvision; from PytorchWildlife.models import classification; from importlib.metadata import distributions; packages = sorted({dist.metadata['Name'] for dist in distributions() if dist.metadata['Name'] and dist.metadata['Name'].lower().startswith('nvidia-') and dist.metadata['Name'].lower() != 'nvidia-ml-py'}); assert not packages, f'Unexpected NVIDIA CUDA packages: {packages}'"
 
 # Non-root user for runtime
 RUN useradd -m appuser && chown -R appuser:appuser /app

@@ -1,0 +1,3 @@
+# Docker runs without a display. Install this variant last so it is the sole
+# provider of the shared ``cv2`` module in the final image.
+opencv-python-headless==5.0.0.93

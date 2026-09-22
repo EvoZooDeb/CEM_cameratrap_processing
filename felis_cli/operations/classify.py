@@ -122,13 +122,14 @@ def _load_classifier(cfg: Config) -> tuple[Callable[[Any], tuple[str, float]], s
     weights = cfg.two_stage.models_dir / f"{classifier}.keras"
     if not weights.exists():
         raise FileNotFoundError(f"Classifier weights not found: {weights}")
-    try:
-        import numpy as np
-        import tensorflow as tf
-    except ImportError as exc:
-        raise RuntimeError(
-            "EfficientNet classification requires TensorFlow to be installed locally."
-        ) from exc
+    with third_party_stdout():
+        try:
+            import numpy as np
+            import tensorflow as tf
+        except ImportError as exc:
+            raise RuntimeError(
+                "EfficientNet classification requires TensorFlow to be installed locally."
+            ) from exc
     tensorflow_device = _tensorflow_device(cfg.predict.device)
     if _is_cpu_device(cfg.predict.device):
         try:
@@ -145,7 +146,7 @@ def _load_classifier(cfg: Config) -> tuple[Callable[[Any], tuple[str, float]], s
     def classify(image: Any) -> tuple[str, float]:
         resized = cv2.resize(image, (380, 380))
         batch = np.expand_dims(resized.astype("float32") / 255.0, axis=0)
-        with tf.device(tensorflow_device):
+        with third_party_stdout(), tf.device(tensorflow_device):
             scores = model.predict(batch, verbose=0)[0]
         if len(scores) != len(classes):
             raise ValueError(
@@ -255,6 +256,7 @@ def classify(cfg: Config, completed_files: list[str] | None = None) -> None:
                     predictions[key] = {
                         "label": detector_classes["passthrough"][class_id],
                         "confidence": float(parts[5]),
+                        "source": "detector",
                     }
                     passthrough_count += 1
                     detail(LOG, "Passthrough %s: %s", key, predictions[key]["label"])
@@ -262,7 +264,11 @@ def classify(cfg: Config, completed_files: list[str] | None = None) -> None:
                     crop = _square_crop(image, [float(value) for value in parts[1:5]])
                     if crop is not None:
                         label, confidence = classify_crop(crop)
-                        predictions[key] = {"label": label, "confidence": confidence}
+                        predictions[key] = {
+                            "label": label,
+                            "confidence": confidence,
+                            "source": "classifier",
+                        }
                         classified_count += 1
                         detail(
                             LOG,

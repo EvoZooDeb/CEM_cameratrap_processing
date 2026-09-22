@@ -12,9 +12,9 @@ class PathsResolved:
     results_root: Path
     per_file_root: Path
     results_dir: Path
-    exif_csv: Path
-    final_csv: Path
-    per_image_csv: Path
+    media_metadata_csv: Path
+    event_results_csv: Path
+    media_results_csv: Path
     detections_dir: Path
     progress_json: Path
     two_stage_json: Path
@@ -32,17 +32,17 @@ def resolve_paths(cfg: Config) -> PathsResolved:
     results_root = cfg.paths.output_root / cfg.paths.username
     per_file_root = results_root / cfg.paths.camera_id / cfg.paths.footage_date
     results_dir = per_file_root / "results"
-    exif_csv = (
+    media_metadata_csv = (
         results_dir
-        / f"{cfg.paths.username}_{cfg.paths.camera_id}_{cfg.paths.footage_date}_exif.csv"
+        / f"{cfg.paths.username}_{cfg.paths.camera_id}_{cfg.paths.footage_date}_media_metadata.csv"
     )
-    final_csv = (
+    event_results_csv = (
         results_dir
-        / f"{cfg.paths.username}_{cfg.paths.camera_id}_{cfg.paths.footage_date}_results.csv"
+        / f"{cfg.paths.username}_{cfg.paths.camera_id}_{cfg.paths.footage_date}_event_results.csv"
     )
-    per_image_csv = (
+    media_results_csv = (
         results_dir
-        / f"{cfg.paths.username}_{cfg.paths.camera_id}_{cfg.paths.footage_date}_per_image.csv"
+        / f"{cfg.paths.username}_{cfg.paths.camera_id}_{cfg.paths.footage_date}_media_results.csv"
     )
     detections_dir = results_dir / "detections"
     progress_json = (
@@ -58,9 +58,9 @@ def resolve_paths(cfg: Config) -> PathsResolved:
         results_root=results_root,
         per_file_root=per_file_root,
         results_dir=results_dir,
-        exif_csv=exif_csv,
-        final_csv=final_csv,
-        per_image_csv=per_image_csv,
+        media_metadata_csv=media_metadata_csv,
+        event_results_csv=event_results_csv,
+        media_results_csv=media_results_csv,
         detections_dir=detections_dir,
         progress_json=progress_json,
         two_stage_json=two_stage_json,

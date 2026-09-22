@@ -76,11 +76,6 @@ class RunPipeline(Command):
             ),
         )
         parser.add_argument(
-            "--save-per-image",
-            action="store_true",
-            help="Also write the per-media summary CSV during aggregation.",
-        )
-        parser.add_argument(
             "--validate",
             action="store_true",
             help="Run visual validation after aggregation completes.",
@@ -138,7 +133,7 @@ class RunPipeline(Command):
                 LOG.warning("[cancelled] Writing partial EXIF and results...")
                 get_exif(cfg, include_files=set(completed_files))
                 classify(cfg, completed_files=completed_files)
-                aggregate(cfg, save_per_image=True, completed_files=completed_files)
+                aggregate(cfg, completed_files=completed_files)
                 return
 
             status(LOG, "[2/%d] Extracting EXIF...", steps)
@@ -149,7 +144,7 @@ class RunPipeline(Command):
                 classify(cfg)
 
             status(LOG, "[%d/%d] Aggregating...", steps, steps)
-            aggregate(cfg, save_per_image=parsed_args.save_per_image)
+            aggregate(cfg)
         finally:
             signal.signal(signal.SIGTERM, previous_sigterm_handler)
 

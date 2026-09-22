@@ -75,13 +75,12 @@ def get_exif(
             continue
 
     df = pd.DataFrame(rows, columns=["file_name", "date_exif", "duration"])
-    df.to_csv(p.exif_csv, index=False)
+    df.to_csv(p.media_metadata_csv, index=False)
     status(
         LOG,
         "EXIF extraction complete: %d record(s), %d AVI skipped; wrote %s",
         len(df),
         avi_count,
-        p.exif_csv,
+        p.media_metadata_csv,
     )
     return df, avi_count
-
