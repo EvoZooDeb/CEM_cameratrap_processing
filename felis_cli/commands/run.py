@@ -8,6 +8,7 @@ from cliff.command import Command
 
 from ..config import load_config
 from ..operations.aggregate import aggregate
+from ..operations.artifacts import package_artifacts
 from ..operations.classify import classify
 from ..operations.exif import get_exif
 from ..operations.predict import predict
@@ -90,6 +91,14 @@ class RunPipeline(Command):
             action="store_true",
             help="Write annotated validation overlays when --validate is also supplied.",
         )
+        parser.add_argument(
+            "--package-artifacts",
+            action="store_true",
+            help=(
+                "Create a verified artifacts.zip without video frames and remove "
+                "the unpacked result files after the pipeline finishes."
+            ),
+        )
         return parser
 
     def take_action(self, parsed_args):
@@ -134,20 +143,27 @@ class RunPipeline(Command):
                 get_exif(cfg, include_files=set(completed_files))
                 classify(cfg, completed_files=completed_files)
                 aggregate(cfg, completed_files=completed_files)
-                return
+            else:
+                status(LOG, "[2/%d] Extracting EXIF...", steps)
+                get_exif(cfg)
 
-            status(LOG, "[2/%d] Extracting EXIF...", steps)
-            get_exif(cfg)
+                if cfg.two_stage.strategy == "two_stage":
+                    status(LOG, "[3/4] Classifying detected animals...")
+                    classify(cfg)
 
-            if cfg.two_stage.strategy == "two_stage":
-                status(LOG, "[3/4] Classifying detected animals...")
-                classify(cfg)
+                status(LOG, "[%d/%d] Aggregating...", steps, steps)
+                aggregate(cfg)
 
-            status(LOG, "[%d/%d] Aggregating...", steps, steps)
-            aggregate(cfg)
+                if parsed_args.validate:
+                    status(LOG, "[+] Validating (visual)...")
+                    validate(
+                        cfg,
+                        show=not parsed_args.no_show,
+                        save_annotated=parsed_args.save_annotated,
+                    )
+
+            if parsed_args.package_artifacts:
+                status(LOG, "[+] Packaging and verifying artifacts...")
+                package_artifacts(cfg)
         finally:
             signal.signal(signal.SIGTERM, previous_sigterm_handler)
-
-        if parsed_args.validate:
-            status(LOG, "[+] Validating (visual)...")
-            validate(cfg, show=not parsed_args.no_show, save_annotated=parsed_args.save_annotated)

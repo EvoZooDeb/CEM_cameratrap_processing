@@ -227,7 +227,13 @@ options plus `--no-show` and `--save-annotated`.
 ```bash
 felis run --config .felis.yml
 felis run --config .felis.yml --validate --no-show --save-annotated
+felis run --config .felis.yml --package-artifacts
 ```
+
+`--package-artifacts` creates and verifies `artifacts.zip`, omits video frame
+directories, adds a checksum manifest and `results/detections.zip`, then removes
+the unpacked output. If packaging or verification fails, the unpacked files are
+left in place and the command exits with an error.
 
 On `SIGTERM`, or when the path in `FELIS_CANCEL_FILE` exists, FELIS stops after
 the current processing boundary and writes metadata, media results, and event
